@@ -117,7 +117,7 @@ def get_ray_pedal_target(accel: float, v_ego: float, set_speed: float) -> float:
 
 
 def egmp_dynamic_longitudinal_tuning(CP) -> bool:
-  return CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE) or \
+  return CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N) or \
     kia_ev6_gt_line_longitudinal_tuning(
       CP.carFingerprint, getattr(CP, "carVin", ""),
       testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID),

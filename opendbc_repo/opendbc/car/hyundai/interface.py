@@ -210,7 +210,7 @@ class CarInterface(CarInterfaceBase):
         # panda safety or the carcontroller; the MDPS tolerating held torque at 0 speed
         # is being validated on-road.
         ret.steerAtStandstill = True
-      if candidate == CAR.HYUNDAI_IONIQ_5_PE:
+      if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N):
         ret.steerAtStandstill = True
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
@@ -354,7 +354,7 @@ class CarInterface(CarInterfaceBase):
       ret.longitudinalTuning.kiBP = [0.0, 8.0, 20.0, 35.0]
       ret.longitudinalTuning.kiV = [0.02, 0.03, 0.05, 0.07]
 
-    if candidate == CAR.HYUNDAI_IONIQ_5_PE:
+    if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N):
       ret.longitudinalActuatorDelay = 0.35
       ret.vEgoStarting = 0.4
 
@@ -420,7 +420,7 @@ class CarInterface(CarInterfaceBase):
         ecu_disabled = disable_ecu(disable_can_recv, can_send, bus=bus, addr=addr, com_cont_req=communication_control,
                                    reset=bool(CP.flags & HyundaiFlags.CAN_CANFD_BLENDED))
 
-        if CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_IONIQ_5_PE):
+        if CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N):
           # Track success/failure to auto-switch between openpilot long and stock ACC
           if ecu_disabled:
             ECU_DISABLE_TIMESTAMP = time.monotonic()
