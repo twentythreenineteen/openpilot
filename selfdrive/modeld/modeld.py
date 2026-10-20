@@ -146,7 +146,7 @@ def _egmp_ready_bus(CP) -> int | None:
   # These platforms use the accessory-mode ECU-disable startup sequence.
   from opendbc.car.hyundai.hyundaicanfd import CanBus
   from opendbc.car.hyundai.values import CAR
-  if CP.carFingerprint not in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9):
+  if CP.carFingerprint not in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_6, CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_N):
     return None
   return CanBus(CP).ECAN
 

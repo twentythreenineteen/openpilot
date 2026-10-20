@@ -945,6 +945,8 @@ _CCNC_ADRV_TEMPLATES = {
     0x38C: bytes.fromhex("000000f79f000000000000000000000000000000000000000000000000000000"),
   },
 }
+_CCNC_ADRV_TEMPLATES[CAR.HYUNDAI_IONIQ_5_N] = _CCNC_ADRV_TEMPLATES[CAR.HYUNDAI_IONIQ_5_PE]
+
 _CCNC_ADRV_PERIODS = {
   CAR.KIA_EV9: {
     0x160: 2,
@@ -965,13 +967,14 @@ _CCNC_ADRV_PERIODS = {
     0x38C: 20,
   },
 }
+_CCNC_ADRV_PERIODS[CAR.HYUNDAI_IONIQ_5_N] = _CCNC_ADRV_PERIODS[CAR.HYUNDAI_IONIQ_5_PE]
 
 
 def create_accelerator_brake_alt_spoof(bus: int, counter: int, brake_pressed: bool, accelerator_pressed: bool,
                                        car_fingerprint=None) -> CanData:
   if car_fingerprint == CAR.KIA_EV9:
     template = _KIA_EV9_ACCEL_BRAKE_ALT_TEMPLATE
-  elif car_fingerprint == CAR.HYUNDAI_IONIQ_5_PE:
+  elif car_fingerprint in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N):
     template = _HYUNDAI_IONIQ_5_PE_ACCEL_BRAKE_ALT_TEMPLATE
   else:
     template = _ACCEL_BRAKE_ALT_TEMPLATE
