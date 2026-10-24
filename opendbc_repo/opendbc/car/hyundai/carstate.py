@@ -10,7 +10,7 @@ from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, HyundaiStarPilotFlags, HyundaiStarPilotSafetyFlags, CAR, DBC, Buttons, CarControllerParams, \
-                                       CANFD_ANGLE_LONGITUDINAL_CAR, CANFD_CORNER_RADAR_BSM_CAR, \
+                                       CANFD_ANGLE_LONGITUDINAL_CAR, CCNC_HDA2_LONGITUDINAL_CAR, CANFD_CORNER_RADAR_BSM_CAR, \
                                        CANFD_ALT_BUTTONS_RESUME_CAR, \
                                        hyundai_cancel_button_enables_cruise, ALT_BUS_LDA_BUTTON_CARS, ALT_BUS_LDA_BUTTON_SWL_STAT_CARS
 from opendbc.car.interfaces import CarStateBase
@@ -197,7 +197,7 @@ class CarState(CarStateBase):
     self.blindspots_front_corner_1_ts = 0
     self.left_blindspot_from_radar = False
     self.right_blindspot_from_radar = False
-    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
+    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR:
       self.hba_icon = 0
       self.main_cruise_on = False
       self.angle_steering_angle = 0.0
@@ -571,7 +571,7 @@ class CarState(CarStateBase):
     ret.steeringTorqueEps = cp.vl["MDPS"]["STEERING_OUT_TORQUE"]
     ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > self.params.STEER_THRESHOLD, 5)
     ret.steerFaultTemporary = cp.vl["MDPS"]["LKA_FAULT"] != 0
-    if self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
+    if self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or self.CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR:
       self.angle_steering_angle = cp.vl["MDPS"]["STEERING_ANGLE_2"]
       self.angle_steering_fault = cp.vl["MDPS"]["LKA_ANGLE_FAULT"] != 0
       ret.steerFaultTemporary = ret.steerFaultTemporary or self.angle_steering_fault
@@ -668,7 +668,7 @@ class CarState(CarStateBase):
       self.stock_lfa_msg = copy.copy(cp.vl["LFA"])
     if cp.ts_nanos["LFAHDA_CLUSTER"]["CHECKSUM"] > 0:
       self.stock_lfahda_cluster_msg = copy.copy(cp.vl["LFAHDA_CLUSTER"])
-    if self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR and cp.ts_nanos["FR_CMR_01_10ms"]["FR_CMR_Crc1Val"] > 0:
+    if (self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or self.CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR) and cp.ts_nanos["FR_CMR_01_10ms"]["FR_CMR_Crc1Val"] > 0:
       hba_icon = int(cp.vl["FR_CMR_01_10ms"]["HBA_IndLmpReq"])
       self.hba_icon = hba_icon if hba_icon in (1, 2) else 0
     if cp.ts_nanos["BLINKER_STALKS"]["CHECKSUM_MAYBE"] > 0:
@@ -741,7 +741,7 @@ class CarState(CarStateBase):
     ]
     if CP.enableBsm:
       msgs.append(("BLINDSPOTS_REAR_CORNERS", 0))
-    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
+    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR:
       msgs.append(("BLINDSPOTS_FRONT_CORNER_2", 0))
       msgs.append(("FR_CMR_01_10ms", 0))
     if CP.flags & HyundaiFlags.EV:

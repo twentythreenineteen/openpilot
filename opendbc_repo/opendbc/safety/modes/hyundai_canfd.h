@@ -497,7 +497,7 @@ static safety_config hyundai_canfd_init(uint16_t param) {
                              hyundai_canfd_lka_steering_alt && GET_FLAG(param, HYUNDAI_PARAM_CANFD_NO_STOCK_LKA);
   hyundai_ccnc = GET_FLAG(param, HYUNDAI_PARAM_CCNC);
   hyundai_canfd_ccnc_angle_long = hyundai_longitudinal && hyundai_canfd_lka_steering &&
-                                  hyundai_canfd_lka_steering_alt && hyundai_canfd_angle_steering && hyundai_ccnc;
+                                  hyundai_canfd_lka_steering_alt && hyundai_ccnc;
   hyundai_canfd_lka_alt_drive_gear = false;
   hyundai_canfd_inactive_accel_tx_count = 0U;
 

@@ -8,6 +8,7 @@ from opendbc.car.hyundai.values import HyundaiFlags, CAR, CarControllerParams, \
                                                    CANFD_UNSUPPORTED_LONGITUDINAL_CAR, \
                                                    CANFD_SECURITYACCESS_CAR, \
                                                    CANFD_ANGLE_LONGITUDINAL_CAR, \
+                                                   CCNC_HDA2_LONGITUDINAL_CAR, \
                                                    CANFD_RADAR_ECU_KEEPALIVE_CAR, \
                                                    RADAR_LIVE_LONGITUDINAL_CAR, \
                                                    UNSUPPORTED_LONGITUDINAL_CAR, HyundaiSafetyFlags, \
@@ -213,6 +214,8 @@ class CarInterface(CarInterfaceBase):
       if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_5_N):
         ret.steerAtStandstill = True
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
+        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
+      if candidate in (CANFD_ANGLE_LONGITUDINAL_CAR | CCNC_HDA2_LONGITUDINAL_CAR) and ret.flags & HyundaiFlags.CCNC:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
 
     else:

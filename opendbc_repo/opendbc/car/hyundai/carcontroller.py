@@ -12,6 +12,7 @@ from opendbc.car.hyundai import hyundaicanfd, hyundaican
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.lead_data import CanLeadDataState
 from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags, HyundaiStarPilotFlags, Buttons, CarControllerParams, CAR, CANFD_ANGLE_LONGITUDINAL_CAR, \
+                                        CCNC_HDA2_LONGITUDINAL_CAR, \
                                         CANFD_RADAR_ECU_KEEPALIVE_CAR, CANFD_ALT_BUTTONS_RESUME_CAR, kia_ev6_gt_line_longitudinal_tuning, \
                                         KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID
 from opendbc.car.interfaces import CarControllerBase
@@ -490,7 +491,7 @@ class CarController(CarControllerBase):
     self.ecu_disable_failed = False
     self._ecu_disable_checked = False
     self._params = Params()
-    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
+    if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR:
       self._ev9_long_tuning = EV9LongitudinalTuningState()
       self._left_blindspot_warning = BlindspotWarningState()
       self._right_blindspot_warning = BlindspotWarningState()
@@ -693,7 +694,7 @@ class CarController(CarControllerBase):
       self.CP.carFingerprint, getattr(self.CP, "carVin", ""),
       testing_ground.use(KIA_EV6_GT_LINE_LONG_TUNING_TESTING_GROUND_ID),
     )
-    is_ccnc_angle_long = self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR
+    is_ccnc_angle_long = self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or self.CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR
     if is_ccnc_angle_long and (self._ev9_long_tuning.stop_request or not CC.enabled or CC.cruiseControl.override):
       self._ioniq_6_long_tuning = reset_egmp_longitudinal_tuning(self._ioniq_6_long_tuning)
     if should_reset_ev6_gt_line_longitudinal_tuning(self.CP, actuators.longControlState):
@@ -945,6 +946,8 @@ class CarController(CarControllerBase):
                           self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT)
     ccnc_angle_long = self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR and \
       self.CP.flags & HyundaiFlags.CCNC and angle_lkas_alt and self.long_active_ecu
+    is_ccnc_hda2_long = self.CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR and \
+      self.CP.flags & HyundaiFlags.CCNC and not angle_lkas_alt and self.long_active_ecu
     steering_msg_active = apply_steer_req
     if angle_lkas_alt:
       # Angle LKAS_ALT cars fault if the angle-steering status drops inactive during torque limiting.
@@ -1027,7 +1030,7 @@ class CarController(CarControllerBase):
 
     if self.long_active_ecu:
       if lka_steering:
-        if ccnc_angle_long:
+        if ccnc_angle_long or is_ccnc_hda2_long:
           left_escalated = CS.left_blindspot_from_radar and CC.leftBlinker and not CC.rightBlinker
           right_escalated = CS.right_blindspot_from_radar and CC.rightBlinker and not CC.leftBlinker
           left_warning = BlindspotWarningOutput()
@@ -1062,7 +1065,7 @@ class CarController(CarControllerBase):
         can_sends.extend(adrv_messages)
         # The front radar treats ADAS_DRV's 0x100 broadcast as its host heartbeat
         # and stops publishing object tracks when it disappears.
-        radar_heartbeat_step = 1 if ccnc_angle_long else 4
+        radar_heartbeat_step = 1 if (ccnc_angle_long or is_ccnc_hda2_long) else 4
         if self.CP.carFingerprint in CANFD_RADAR_ECU_KEEPALIVE_CAR and self.frame % radar_heartbeat_step == 0:
           can_sends.append(hyundaicanfd.create_accelerator_brake_alt_spoof(0, self.frame // radar_heartbeat_step,
                                                                             CS.out.brakePressed, CS.out.gasPressed,
@@ -1117,7 +1120,7 @@ class CarController(CarControllerBase):
           if use_egmp_smoothed_accel:
             acc_kwargs["jerk_lower"] = self._ioniq_6_long_tuning.jerk_lower
             acc_kwargs["jerk_upper"] = self._ioniq_6_long_tuning.jerk_upper
-        if ccnc_angle_long:
+        if ccnc_angle_long or is_ccnc_hda2_long:
           self._ev9_long_tuning = update_ev9_longitudinal_tuning(
             self._ev9_long_tuning, CC.enabled and not CC.cruiseControl.override,
             CC.actuators.longControlState == LongCtrlState.stopping, float(CS.out.vEgo),
