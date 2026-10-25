@@ -571,7 +571,7 @@ class CarState(CarStateBase):
     ret.steeringTorqueEps = cp.vl["MDPS"]["STEERING_OUT_TORQUE"]
     ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > self.params.STEER_THRESHOLD, 5)
     ret.steerFaultTemporary = cp.vl["MDPS"]["LKA_FAULT"] != 0
-    if self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR or self.CP.carFingerprint in CCNC_HDA2_LONGITUDINAL_CAR:
+    if self.CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR:
       self.angle_steering_angle = cp.vl["MDPS"]["STEERING_ANGLE_2"]
       self.angle_steering_fault = cp.vl["MDPS"]["LKA_ANGLE_FAULT"] != 0
       ret.steerFaultTemporary = ret.steerFaultTemporary or self.angle_steering_fault

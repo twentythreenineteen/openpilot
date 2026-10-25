@@ -993,7 +993,7 @@ class CarController(CarControllerBase):
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEERING_ALT))
 
     # LFA and HDA icons
-    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not ccnc_angle_long:
+    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not (ccnc_angle_long or is_ccnc_hda2_long):
       if ccnc_non_hda2:
         can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.long_active_ecu, CC.enabled, CC.hudControl,
                                                   CC.leftBlinker, CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5,
@@ -1043,7 +1043,7 @@ class CarController(CarControllerBase):
               self._right_blindspot_warning, right_escalated, CC.rightBlinker,
             )
           steering_available = CC.latActive or CC.enabled
-          steering_active = direct_steering_active and apply_steer_req and not CS.out.steeringPressed
+          steering_active = (direct_steering_active if ccnc_angle_long else bool(CC.latActive)) and apply_steer_req and not CS.out.steeringPressed
           adrv_messages = hyundaicanfd.create_ccnc_adrv_messages(
             self.packer, self.CP, self.CAN, self.frame, CC.enabled, CS.out.cruiseState.available, CC.hudControl,
             CS.out, CS.is_metric, steering_available, steering_active,
