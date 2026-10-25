@@ -215,8 +215,6 @@ class CarInterface(CarInterfaceBase):
         ret.steerAtStandstill = True
       if ret.flags & HyundaiFlags.CCNC and not ret.flags & HyundaiFlags.CANFD_LKA_STEERING:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
-      if candidate in (CANFD_ANGLE_LONGITUDINAL_CAR | CCNC_HDA2_LONGITUDINAL_CAR) and ret.flags & HyundaiFlags.CCNC:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
 
     else:
       # Shared configuration for non CAN-FD cars
@@ -300,7 +298,7 @@ class CarInterface(CarInterfaceBase):
 
     if ret.openpilotLongitudinalControl:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.LONG.value
-      if candidate in CANFD_ANGLE_LONGITUDINAL_CAR and ret.flags & HyundaiFlags.CCNC:
+      if candidate in (CANFD_ANGLE_LONGITUDINAL_CAR | CCNC_HDA2_LONGITUDINAL_CAR) and ret.flags & HyundaiFlags.CCNC:
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CCNC.value
     if ret.flags & HyundaiFlags.HYBRID:
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.HYBRID_GAS.value
@@ -396,7 +394,7 @@ class CarInterface(CarInterfaceBase):
         addr, bus = 0x730, CanBus(CP).ECAN
 
       skip_disable_ecu = False
-      if CP.carFingerprint in CANFD_ANGLE_LONGITUDINAL_CAR and egmp_in_ready_state(can_recv, bus):
+      if CP.carFingerprint in (CANFD_ANGLE_LONGITUDINAL_CAR | CCNC_HDA2_LONGITUDINAL_CAR) and egmp_in_ready_state(can_recv, bus):
         apply_ecu_disable_failure_fallback(CP, params)
         ecu_log(f"=== ECU DISABLE SKIPPED - READY detected, safetyParam stripped to {CP.safetyConfigs[-1].safetyParam}, lateral-only mode ===")
         skip_disable_ecu = True
