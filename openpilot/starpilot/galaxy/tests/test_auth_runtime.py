@@ -39,6 +39,8 @@ class AuthRuntimeTest(unittest.TestCase):
     self.assertTrue(allowed_authority('localhost:8082', '127.0.0.1', port))
     self.assertTrue(allowed_authority('192.168.4.21:8082', '192.168.4.21', port))
     self.assertTrue(allowed_authority('100.64.1.5:8082', '100.64.1.5', port))
+    self.assertTrue(allowed_authority('100.83.147.35:8082', '127.0.0.1', port))
+    self.assertTrue(allowed_authority('comma-device.ts.net:8082', '127.0.0.1', port))
     self.assertFalse(allowed_authority('device.example:8082', '192.168.4.21', port))
     self.assertFalse(allowed_authority('192.168.4.22:8082', '192.168.4.21', port))
     self.assertFalse(allowed_authority('localhost:8082', '192.168.4.21', port))

@@ -145,7 +145,7 @@ class _LocalHTTPServer(ThreadingHTTPServer):
           cleanup.callback(close)
 
 
-LOCAL_NETWORKS = tuple(ip_network(network) for network in ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16'))
+LOCAL_NETWORKS = tuple(ip_network(network) for network in ('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10'))
 
 
 def direct_local_connection(peer: str, destination: str, headers) -> bool:
@@ -174,13 +174,23 @@ def allowed_authority(host: str, local_address: str, port: int) -> bool:
   """Accept only the literal address reached by this socket, or loopback's name."""
   if host == f'localhost:{port}' and local_address == '127.0.0.1':
     return True
-  if host != f'{local_address}:{port}':
-    return False
-  try:
-    address = ip_address(local_address)
-  except ValueError:
-    return False
-  return isinstance(address, IPv4Address) and not address.is_unspecified
+  if host == f'{local_address}:{port}':
+    try:
+      address = ip_address(local_address)
+      return isinstance(address, IPv4Address) and not address.is_unspecified
+    except ValueError:
+      return False
+  # Allow loopback sockets (like tailscale userspace proxy) to serve private/local IPs and tailscale hostnames
+  if local_address == '127.0.0.1' and host.endswith(f':{port}'):
+    hostname = host[:-len(f':{port}')]
+    try:
+      addr = ip_address(hostname)
+      if isinstance(addr, IPv4Address) and any(addr in net for net in LOCAL_NETWORKS):
+        return True
+    except ValueError:
+      if hostname.endswith(('.local', '.ts.net', '.tailscale.net')) or hostname.startswith('comma'):
+        return True
+  return False
 
 
 @lru_cache(maxsize=128)
