@@ -711,7 +711,7 @@ class CarController(CarControllerBase):
       accel_cmd >= self._ioniq_6_long_tuning.actual_accel or
       self._ioniq_6_long_tuning.launch_active or
       self._ioniq_6_long_tuning.stopping or
-      self.CP.carFingerprint == CAR.KIA_EV9
+      self.CP.carFingerprint in (CAR.KIA_EV9, CAR.HYUNDAI_IONIQ_5_N)
     )
     if should_use_ev6_gt_line_stop_direct_tracking(is_ev6_gt_line, self._ioniq_6_long_tuning.stopping,
                                                    CS.out.vEgo, accel_cmd, self._ioniq_6_long_tuning.actual_accel):
