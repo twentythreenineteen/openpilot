@@ -23,7 +23,7 @@ CASES = [('HYUNDAI_IONIQ', 'hyundai_kia_mando_front_radar_generated', 1, 1280, 3
  ('HYUNDAI_SONATA_HYBRID', 'hyundai_kia_mando_front_radar_generated', 1, 1280, 32, 8, False),
  ('HYUNDAI_IONIQ_5', 'hyundai_mrr30_radar_generated', 0, 528, 16, 32, False),
  ('HYUNDAI_IONIQ_5_PE', 'hyundai_mrr35_radar_generated', 0, 933, 32, 24, False),
- ('HYUNDAI_IONIQ_5_N', 'hyundai_mrr30_radar_generated', 0, 528, 16, 32, False),
+ ('HYUNDAI_IONIQ_5_N', 'hyundai_mrr35_radar_generated', 0, 933, 32, 24, False),
  ('HYUNDAI_IONIQ_6', 'hyundai_mrr35_radar_generated', 1, 933, 32, 24, False),
  ('HYUNDAI_IONIQ_9', 'hyundai_mrr35_radar_generated', 0, 933, 32, 24, False),
  ('KIA_K5_HEV_2020', 'hyundai_kia_mando_front_radar_generated', 1, 1280, 32, 8, False),

@@ -34,10 +34,16 @@ class CarControllerParams:
       self.STEER_THRESHOLD = 250
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
-      if (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and 0 <= vEgoRaw < 15 and
-          CP.carFingerprint != CAR.KIA_CARNIVAL_HEV_4TH_GEN):
-        self.STEER_DELTA_UP = 10
-        self.STEER_DELTA_DOWN = 8
+      if not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and 0 <= vEgoRaw < 15:
+        if CP.carFingerprint == CAR.KIA_CARNIVAL_HEV_4TH_GEN:
+          self.STEER_DELTA_UP = 2
+          self.STEER_DELTA_DOWN = 3
+        elif CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N:
+          self.STEER_DELTA_UP = 3
+          self.STEER_DELTA_DOWN = 7
+        else:
+          self.STEER_DELTA_UP = 10
+          self.STEER_DELTA_DOWN = 8
 
     # To determine the limit for your car, find the maximum value that the stock LKAS will request.
     # If the max stock LKAS request is <384, add your car to this list.
@@ -513,10 +519,13 @@ class CAR(Platforms):
     radar_dbc=HYUNDAI_MRR35_RADAR_DBC,
   )
   HYUNDAI_IONIQ_5_N = HyundaiCanFDPlatformConfig(
-    [HyundaiCarDocs("Hyundai Ioniq 5 N (with HDA II) 2024", car_parts=CarParts.common([CarHarness.hyundai_s]))],
-    CarSpecs(mass=2205, wheelbase=3.00, steerRatio=14.26, tireStiffnessFactor=1.3),
+    [
+      HyundaiCarDocs("Hyundai Ioniq 5 N (with HDA II) 2024-25",
+                     car_parts=CarParts.common([CarHarness.hyundai_s, CarHarness.hyundai_q]))
+    ],
+    CarSpecs(mass=2205, wheelbase=3.00, steerRatio=12.8, tireStiffnessFactor=1.3),
     flags=HyundaiFlags.EV | HyundaiFlags.CCNC,
-    radar_dbc=HYUNDAI_MRR30_RADAR_DBC,
+    radar_dbc=HYUNDAI_MRR35_RADAR_DBC,
   )
   HYUNDAI_IONIQ_9 = HyundaiCanFDPlatformConfig(
     [HyundaiCarDocs("Hyundai Ioniq 9 (with HDA II & LFA2) 2025-26", "Highway Driving Assist II & Lane Follow Assist 2",
