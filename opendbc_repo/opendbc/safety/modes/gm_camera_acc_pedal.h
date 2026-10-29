@@ -255,8 +255,8 @@ static bool gm_camera_gas_shape(const CANPacket_t *msg) {
   const bool active = GET_BIT(msg, 0U);
   return (GET_LEN(msg) == 8U) && (((msg->data[1] >> 6) & 3U) == 1U) &&
     ((msg->data[0] & 0x3FU) == (active ? 1U : 0U)) && ((msg->data[1] & 0x18U) == 0U) &&
-    (msg->data[4] == (active ? 0U : 1U)) && (msg->data[5] == (uint8_t)(0xFFU - msg->data[1])) &&
-    (msg->data[6] == (uint8_t)(0xFFU - msg->data[2])) &&
+    (msg->data[4] == (active ? 0U : 1U)) && ((msg->data[5] ^ msg->data[1]) == 0xFFU) &&
+    ((msg->data[6] ^ msg->data[2]) == 0xFFU) &&
     (msg->data[7] == (uint8_t)(0x100U - msg->data[3] - counter));
 }
 
