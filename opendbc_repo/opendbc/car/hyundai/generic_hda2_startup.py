@@ -86,6 +86,18 @@ class GenericHDA2Startup(RadarHDA2Startup):
   def continuity_required(self):
     return required(self.cp)
 
+  def prepare(self, *, admission):
+    try:
+      return super().prepare(admission=admission)
+    except Exception:
+      if self.cp.flags & HyundaiFlags.CCNC:
+        self.outcome = Outcome.STOCK_RESTORED
+        self.restored = True
+        self.cp = stock_copy(self.stock_cp)
+        self.prepared_cp = deepcopy(self.cp.to_dict())
+        return self.cp
+      raise
+
   def finalize_aol_configuration(self, ci):
     if self.published or self.closed or ci is not self.ci or not self.ready:
       raise RuntimeError('Ordinary HDA-II finalization requires configured startup')

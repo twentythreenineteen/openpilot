@@ -16,7 +16,7 @@ CASES = [
   (CAR.HYUNDAI_KONA_EV_2022, 'hyundai_mrrevo14f_radar_generated', 1, 0x602, 16, 8),
   (CAR.HYUNDAI_KONA_EV_2ND_GEN, 'hyundai_mrr35_radar_generated', 0, 0x3A5, 32, 24),
   (CAR.HYUNDAI_IONIQ_5, 'hyundai_mrr30_radar_generated', 0, 0x210, 16, 32),
-  (CAR.HYUNDAI_IONIQ_5_N, 'hyundai_mrr30_radar_generated', 0, 0x210, 16, 32),
+  (CAR.HYUNDAI_IONIQ_5_N, 'hyundai_mrr35_radar_generated', 0, 0x3A5, 32, 24),
   (CAR.KIA_EV6, 'hyundai_mrr30_radar_generated', 0, 0x210, 16, 32),
   (CAR.GENESIS_GV60_EV_1ST_GEN, 'hyundai_mrr30_radar_generated', 0, 0x210, 16, 32),
 ]
