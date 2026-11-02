@@ -17,7 +17,6 @@ from opendbc.car.hyundai.generic_hda2_startup import (
 )
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.tests.test_radar_hda2_startup import params
-from opendbc.car.hyundai.torque_ev_startup import TorqueEVStartup, candidate
 from opendbc.car.hyundai.values import CAR, DBC, Bus, HYUNDAI_MRR35_RADAR_DBC, CarControllerParams
 
 
@@ -26,9 +25,7 @@ def make_ioniq5n_stock_cp(alpha=False):
 
 
 def make_ioniq5n_long_cp():
-  # The 5 N is torque-EV owned, so get_params() leaves LONG off and the startup
-  # owner promotes it. Build the LONG CP the same way production does.
-  return candidate(make_ioniq5n_stock_cp(), requested=True, is_release=False)
+  return params(CAR.HYUNDAI_IONIQ_5_N, hybrid=False, alpha=True, alt=False)
 
 
 class MockKeeper:
@@ -68,11 +65,8 @@ def test_ioniq5n_qualifies_for_generic_hda2_startup():
   assert required(long_cp)
   assert qualified(long_cp)
 
-  # ccNC rejects the ECU disable until controls are live, so the 5 N must take
-  # the deferred TorqueEVStartup path rather than the immediate generic one.
-  # Card passes the stock CP; the owner promotes LONG itself.
-  owner = CarInterface.startup_owner(stock_cp, (list, list), requested=True)
-  assert isinstance(owner, TorqueEVStartup)
+  owner = CarInterface.startup_owner(long_cp, (list, list), requested=True)
+  assert isinstance(owner, GenericHDA2Startup)
   assert owner.communication_control_request() == b"\x28\x83\x01"
 
 

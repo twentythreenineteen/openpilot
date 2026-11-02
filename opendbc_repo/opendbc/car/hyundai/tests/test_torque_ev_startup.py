@@ -39,7 +39,7 @@ class Keeper:
     self.started = False
 
 
-def owner(stock, *, session=True, reply=None, restore=True, send_exception=False, replies=None):
+def owner(stock, *, session=True, reply=None, restore=True, send_exception=False):
   sent = []
 
   def send(frames):
@@ -57,8 +57,6 @@ def owner(stock, *, session=True, reply=None, restore=True, send_exception=False
       if request == b"\x10\x03":
         return {(instance.address, None): b""} if session else {}
       if request == b"\x28\x83\x01":
-        if replies is not None:
-          return {} if not replies else {(instance.address, None): replies.pop(0)}
         return {} if reply is None else {(instance.address, None): reply}
       if request == b"\x28\x00\x01":
         return {(instance.address, None): b""} if restore else {}
@@ -124,26 +122,6 @@ def test_negative_or_exception_after_emission_restores_exact_stock(stock):
     assert startup.disable_attempted and startup.restored
     assert startup.outcome is Outcome.STOCK_RESTORED
     assert final.to_dict() == stock.to_dict()
-
-
-def test_conditions_not_correct_retries_until_the_ecu_wakes(stock):
-  startup, _ = owner(stock, replies=[b"\x7f\x28\x22", b"\x7f\x28\x22", b"\x68\x03"])
-  with patch("opendbc.car.hyundai.torque_ev_startup.time.sleep"):
-    final = startup.prepare(admission=lambda: True)
-  assert startup.outcome is Outcome.SENT_UNCONFIRMED
-  assert startup.disable_response == "positive_communication_control"
-  assert final.openpilotLongitudinalControl
-
-
-def test_other_negative_response_stays_terminal(stock):
-  replies = [b"\x7f\x28\x31", b"\x68\x03"]
-  startup, _ = owner(stock, replies=replies)
-  with patch("opendbc.car.hyundai.torque_ev_startup.time.sleep"):
-    final = startup.prepare(admission=lambda: True)
-  assert startup.outcome is Outcome.STOCK_RESTORED
-  assert startup.disable_response == "negative_communication_control"
-  assert replies == [b"\x68\x03"]  # no retry consumed the second reply
-  assert final.to_dict() == stock.to_dict()
 
 
 def test_unconfirmed_restore_aborts_before_publication(stock):

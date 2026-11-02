@@ -17,7 +17,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.structs import CarParams
 from opendbc.can.parser import MAX_BAD_COUNTER
 
-CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_IONIQ_5_N, CAR.HYUNDAI_KONA_EV_2ND_GEN))
+CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN))
 
 
 def topology_owned(cp):
@@ -121,7 +121,6 @@ class TorqueEVStartup(HyundaiECUStartup):
     # Existing generic helper returns after send without inspecting negatives.
     # Preserve original explicit rejection vs expected suppressed silence.
     self.disable_response = None
-    retries = 0
     for _ in range(10):
       try:
         session = self._query(can_send, can_recv, self.bus, [(self.address, None)], [b"\x10\x03"], [b"\x50\x03"])
@@ -134,25 +133,15 @@ class TorqueEVStartup(HyundaiECUStartup):
         if not replies:
           self.disable_response = "suppressed_reply_sent_unconfirmed"
           return True
-        retry = False
         for payload in replies.values():
           if payload == b"\x68\x03":
             self.disable_response = "positive_communication_control"
           elif len(payload) == 3 and payload[:2] == b"\x7f\x28":
-            # 0x22 conditionsNotCorrect: the ECU is still waking after ignition.
-            if payload[2] == 0x22 and retries < 5:
-              retries += 1
-              self.disable_response = "negative_communication_control_retry"
-              retry = True
-              break
             self.disable_response = "negative_communication_control"
             return False
           else:
             self.disable_response = "unexpected_or_malformed_reply"
             return False
-        if retry:
-          time.sleep(0.2)
-          continue
         return True
       except Exception:
         if self.disable_attempted:
