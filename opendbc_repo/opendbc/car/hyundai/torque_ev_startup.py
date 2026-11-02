@@ -79,7 +79,7 @@ class TorqueEVStartup(HyundaiECUStartup):
     self.handed_off = False
 
   def communication_control_request(self):
-    return b'\x28\x01\x01' if self.cp.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else b'\x28\x83\x01'
+    return b'\x28\x83\x01'
 
   def _disable(self, can_recv, can_send, com_cont_req=None, **kwargs):
     # Existing generic helper returns after send without inspecting negatives.
