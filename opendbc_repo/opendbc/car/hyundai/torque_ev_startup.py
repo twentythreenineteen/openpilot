@@ -17,7 +17,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.structs import CarParams
 from opendbc.can.parser import MAX_BAD_COUNTER
 
-CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN))
+CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_IONIQ_5_N, CAR.HYUNDAI_KONA_EV_2ND_GEN))
 
 
 def topology_owned(cp):
