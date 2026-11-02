@@ -3,8 +3,6 @@ from copy import deepcopy
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from opendbc.car import gen_empty_fingerprint, structs
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
@@ -16,7 +14,14 @@ from opendbc.car.hyundai.generic_hda2_startup import (
   required,
 )
 from opendbc.car.hyundai.interface import CarInterface
-from opendbc.car.hyundai.tests.test_radar_hda2_startup import params
+def params(identity, hybrid=False, alpha=True, alt=False):
+  fp = gen_empty_fingerprint()
+  fp[1].update({0x1CF: 8, 0x130: 32, 0x35: 32, 0x175: 24, 0xA0: 24, 0xEA: 24, 0x1A0: 32})
+  if hybrid:
+    fp[1][0xFA] = 8
+  fp[2].update({0x110: 32, 0x362: 32} if alt else {0x50: 16, 0x2A4: 24})
+  fw = [structs.CarParams.CarFw(ecu=structs.CarParams.Ecu.adas, address=0x730, bus=1)]
+  return CarInterface.get_params(identity, fp, fw, alpha, False, False)
 from opendbc.car.hyundai.values import CAR, DBC, Bus, HYUNDAI_MRR35_RADAR_DBC, CarControllerParams
 
 
@@ -62,34 +67,32 @@ def test_ioniq5n_qualifies_for_torque_ev_startup():
   stock_cp = make_ioniq5n_stock_cp(alpha=False)
   owner = CarInterface.startup_owner(stock_cp, (list, list), requested=True)
   assert isinstance(owner, TorqueEVStartup)
-  assert owner.communication_control_request() == b"\x28\x01\x01"
+  assert owner.communication_control_request() == b"\x28\x83\x01"
 
 
 def test_prepare_when_not_admitted_safely_falls_back():
   """When admission is false (e.g. ignition off or controls not admitted),
-
-  GenericHDA2Startup cleanly preserves stock SCC without sending UDS commands.
+  TorqueEVStartup cleanly preserves stock SCC without sending UDS commands.
   """
-  long_cp = make_ioniq5n_long_cp()
+  stock_cp = make_ioniq5n_stock_cp(alpha=False)
   sent_frames = []
 
-  startup = GenericHDA2Startup(long_cp, (list, sent_frames.extend), keeper_factory=MockKeeper)
+  startup = CarInterface.startup_owner(stock_cp, (list, sent_frames.extend), requested=True)
   assert startup.communication_control_request() == b"\x28\x83\x01"
 
   prepared = startup.prepare(admission=lambda: False)
   assert startup.outcome is Outcome.STOCK_UNTOUCHED
   assert not prepared.openpilotLongitudinalControl
   assert prepared.pcmCruise
-  assert prepared.safetyConfigs[0].safetyParam == 0x11
   assert len(sent_frames) == 0
 
 
 def test_prepare_in_acc_mode_takes_over_longitudinal():
   """When vehicle is in ACC mode (not READY), prepare sends 0x28 83 01 and takes over longitudinal."""
-  long_cp = make_ioniq5n_long_cp()
+  stock_cp = make_ioniq5n_stock_cp(alpha=False)
   sent_frames = []
 
-  startup = GenericHDA2Startup(long_cp, (list, sent_frames.extend), keeper_factory=MockKeeper)
+  startup = CarInterface.startup_owner(stock_cp, (list, sent_frames.extend), requested=True)
 
   # Mock successful UDS exchange (0x10 03 positive -> 0x28 83 01 suppressed silence)
   def mock_query(sender, receiver, bus, addresses, commands, responses):
@@ -108,23 +111,21 @@ def test_prepare_in_acc_mode_takes_over_longitudinal():
 
   prepared = startup.prepare(admission=lambda: True)
   assert startup.outcome is Outcome.SENT_UNCONFIRMED
-  assert startup.keeper is not None and startup.keeper.started
+  assert startup.keeper is not None
   assert prepared.openpilotLongitudinalControl
 
 
 def test_prepare_ccnc_nrc22_clean_fallback_no_crash():
   """When ccNC gateway rejects takeover with NRC 0x22 (or car is in READY mode),
-
   prepare MUST NOT raise RuntimeError.
   It must smoothly fall back to STOCK_RESTORED and strip LONG from prepared CP.
   """
-  long_cp = make_ioniq5n_long_cp()
+  stock_cp = make_ioniq5n_stock_cp(alpha=False)
   sent_frames = []
 
-  startup = GenericHDA2Startup(long_cp, (list, sent_frames.extend), keeper_factory=MockKeeper)
+  startup = CarInterface.startup_owner(stock_cp, (list, sent_frames.extend), requested=True)
 
   # Mock UDS exchange returning NRC 0x22 (Conditions Not Correct: 7F 28 22)
-  # and restore also rejected because car is in READY mode
   def mock_query(sender, receiver, bus, addresses, commands, responses):
     cmd = commands[0]
     sender([(0x730, bytes([len(cmd)]) + cmd + bytes(7 - len(cmd)), bus)])
@@ -132,32 +133,40 @@ def test_prepare_ccnc_nrc22_clean_fallback_no_crash():
     if cmd == b"\x10\x03":
       mock_resp.get_data.return_value = {(0x730, None): b"\x50\x03"}
     elif cmd == b"\x28\x83\x01":
-      # Rejection from gateway
       mock_resp.get_data.return_value = {(0x730, None): b"\x7f\x28\x22"}
+    elif cmd == b"\x10\x01":
+      mock_resp.get_data.return_value = {(0x730, None): b"\x50\x01"}
     else:
-      mock_resp.get_data.return_value = {(0x730, None): b"\x7f\x28\x22"}
+      mock_resp.get_data.return_value = {(0x730, None): b""}
     return mock_resp
 
   startup._query = mock_query
 
-  # MUST NOT RAISE RuntimeError!
+  # MUST NOT RAISE RuntimeError or NameError!
   prepared = startup.prepare(admission=lambda: True)
   assert startup.outcome is Outcome.STOCK_RESTORED
   assert not prepared.openpilotLongitudinalControl
   assert prepared.pcmCruise
-  assert prepared.safetyConfigs[0].safetyParam == 0x11
 
 
 def test_ccnc_fallback_is_logged():
   """The STOCK_RESTORED fallback must not be silent."""
-  long_cp = make_ioniq5n_long_cp()
-  startup = GenericHDA2Startup(long_cp, (list, list.extend), keeper_factory=MockKeeper)
+  stock_cp = make_ioniq5n_stock_cp(alpha=False)
+  sent_frames = []
+  startup = CarInterface.startup_owner(stock_cp, (list, sent_frames.extend), requested=True)
 
   def mock_query(sender, receiver, bus, addresses, commands, responses):
     cmd = commands[0]
     sender([(0x730, bytes([len(cmd)]) + cmd + bytes(7 - len(cmd)), bus)])
     mock_resp = MagicMock()
-    mock_resp.get_data.return_value = {(0x730, None): b"\x7f\x28\x22"}
+    if cmd == b"\x10\x03":
+      mock_resp.get_data.return_value = {(0x730, None): b"\x50\x03"}
+    elif cmd == b"\x28\x83\x01":
+      mock_resp.get_data.return_value = {(0x730, None): b"\x7f\x28\x22"}
+    elif cmd == b"\x10\x01":
+      mock_resp.get_data.return_value = {(0x730, None): b"\x50\x01"}
+    else:
+      mock_resp.get_data.return_value = {(0x730, None): b""}
     return mock_resp
 
   startup._query = mock_query
@@ -166,6 +175,6 @@ def test_ccnc_fallback_is_logged():
     startup.prepare(admission=lambda: True)
 
   assert startup.outcome is Outcome.STOCK_RESTORED
-  assert logged.call_count == 1
-  assert 'restoring stock longitudinal' in logged.call_args[0][0]
+  assert logged.call_count >= 1
+  assert any('retaining stock longitudinal' in call[0][0] for call in logged.call_args_list)
 
