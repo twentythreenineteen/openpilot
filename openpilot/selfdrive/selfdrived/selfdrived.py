@@ -27,7 +27,10 @@ from openpilot.selfdrive.car.car_events import CarEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 from openpilot.selfdrive.selfdrived.events import Events, ET, Alert, Priority as AlertPriority
 from openpilot.starpilot.longitudinal.force_stop_alert import HoldAlertState, EVENT_TYPE as FORCE_STOP_HOLD
-from openpilot.selfdrive.selfdrived.helpers import (ExcessiveActuationCheck, jetlink_in_control, jetlink_lost_alert, throttled_param,
+# Custom alert event type; not a cereal EventName, so no schema change is needed.
+HYUNDAI_LONG_FALLBACK = 'hyundaiLongFallback'
+from openpilot.selfdrive.selfdrived.helpers import (ExcessiveActuationCheck, hyundai_long_fallback_alert, jetlink_in_control,
+                                                    jetlink_lost_alert, throttled_param,
                                                     update_big_model_status, update_jetlink_swaps)
 from openpilot.starpilot.models import jetlink_adapter
 from openpilot.system.manager.process_health import driving_process_failures
@@ -1158,6 +1161,13 @@ class SelfdriveD:
       alerts.append(alert)
     else:
       clear_event_types.add(FORCE_STOP_HOLD)
+    # Card writes this once when a Hyundai LONG takeover failed and stock
+    # longitudinal was restored. Consuming it keeps the alert to one per failure.
+    fallback = hyundai_long_fallback_alert(self, time.monotonic())
+    if fallback is not None:
+      alerts.append(fallback)
+    else:
+      clear_event_types.add(HYUNDAI_LONG_FALLBACK)
     from openpilot.starpilot.car.gm.radar_recovery import EVENT_TYPE as RADAR_RECOVERY_EVENT, RecoveryNotification
     if not hasattr(self, 'radar_recovery_notification'):
       self.radar_recovery_notification = RecoveryNotification()

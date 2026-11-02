@@ -157,6 +157,17 @@ def alpha_long_requested(params, *, is_release: bool) -> bool:
   return not is_release and params.get_bool("AlphaLongitudinalEnabled")
 
 
+def report_hyundai_long_fallback(owner, cp, params):
+  """Structured event + one-shot flag for a failed Hyundai LONG takeover."""
+  from opendbc.car.hyundai.ecu_startup import Outcome
+  if getattr(owner, 'outcome', None) is not Outcome.STOCK_RESTORED:
+    return
+  # The carlog warning is the log line; this is the structured channel and the
+  # flag selfdrived turns into one in-car alert.
+  cloudlog.event('hyundai_long_fallback', car=cp.carFingerprint, owner=type(owner).__name__)
+  params.put_bool('HyundaiLongFallback', True, block=True)
+
+
 class Car:
   CI: CarInterfaceBase
   RI: RadarInterfaceBase
@@ -298,9 +309,11 @@ class Car:
         cp = startup_preferences.prepare(cp, fingerprints=fingerprints)
         from openpilot.starpilot.car.ford.longitudinal_preferences import prepare_release_long as prepare_ford_release_long
         cp = prepare_ford_release_long(cp, self.params, is_release=is_release, enabled=openpilot_enabled_toggle)
-        return self.vehicle_startup.prepare(cp, interfaces[candidate], self.can_callbacks,
-                                            requested=alpha_long_allowed and not is_release and openpilot_enabled_toggle,
-                                            admission=self.startup_diagnostic_admission, defer_until_controls=True)
+        cp = self.vehicle_startup.prepare(cp, interfaces[candidate], self.can_callbacks,
+                                          requested=alpha_long_allowed and not is_release and openpilot_enabled_toggle,
+                                          admission=self.startup_diagnostic_admission, defer_until_controls=True)
+        report_hyundai_long_fallback(self.vehicle_startup.owner, cp, self.params)
+        return cp
 
       self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, cached_params,
                         pre_create_hook=pre_create_hook,

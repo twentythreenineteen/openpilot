@@ -124,6 +124,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SteerFrictionStock", {PERSISTENT, FLOAT}},
     {"TorqueOverrideDocument", {PERSISTENT | DONT_LOG, JSON}},
     {"HideSpeed", {PERSISTENT, BOOL, "0"}},
+    {"HyundaiLongFallback", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BOOL}},
     {"HideMaxSpeed", {PERSISTENT, BOOL, "0"}},
     {"HideSteeringWheel", {PERSISTENT, BOOL, "0"}},
     {"CameraView", {PERSISTENT, INT, "2"}},

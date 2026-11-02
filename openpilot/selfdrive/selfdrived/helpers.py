@@ -10,6 +10,7 @@ from opendbc.car import ACCELERATION_DUE_TO_GRAVITY
 from opendbc.car.lateral import ISO_LATERAL_ACCEL
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from openpilot.starpilot.models.jetlink_adapter import AOL_GRACE_S, aol_in_control
+from openpilot.selfdrive.selfdrived.events import Alert, Priority as AlertPriority
 
 MIN_EXCESSIVE_ACTUATION_COUNT = int(0.25 / DT_CTRL)
 MIN_LATERAL_ENGAGE_BUFFER = int(1 / DT_CTRL)
@@ -30,6 +31,28 @@ def throttled_param(owner, key: str, read):
   if frame is not None:
     cache[key] = (frame, value)
   return value
+
+
+HYUNDAI_LONG_FALLBACK = 'hyundaiLongFallback'
+HYUNDAI_LONG_FALLBACK_S = 8.0
+
+
+def hyundai_long_fallback_alert(owner, now: float):
+  """One alert per failed Hyundai LONG takeover; Card writes the flag once."""
+  params = getattr(owner, 'params', None)
+  if params is None:
+    return None
+  if now >= getattr(owner, 'hyundai_long_fallback_until', 0.):
+    # Only a literal True is a failure flag; a Mock-backed get_bool is not.
+    if throttled_param(owner, 'HyundaiLongFallback', params.get_bool) is not True:
+      return None
+    params.remove('HyundaiLongFallback')
+    owner.hyundai_long_fallback_until = now + HYUNDAI_LONG_FALLBACK_S
+  alert = Alert("Stock ACC Restored", "openpilot longitudinal unavailable", log.SelfdriveState.AlertStatus.normal,
+                log.SelfdriveState.AlertSize.mid, AlertPriority.LOW, car.CarControl.HUDControl.VisualAlert.none,
+                log.SelfdriveState.AudibleAlert.none, 0.)
+  alert.alert_type, alert.event_type = "hyundaiLongFallback/warning", HYUNDAI_LONG_FALLBACK
+  return alert
 
 
 class ExcessiveActuationType(StrEnum):
