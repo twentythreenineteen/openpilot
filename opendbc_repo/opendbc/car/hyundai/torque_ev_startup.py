@@ -8,6 +8,7 @@ from copy import deepcopy
 import time
 
 from opendbc.car import Bus, make_tester_present_msg
+from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
 from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
 from opendbc.car.hyundai.ecu_continuity import commit_controller_tester
@@ -17,7 +18,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.structs import CarParams
 from opendbc.can.parser import MAX_BAD_COUNTER
 
-CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_KONA_EV_2ND_GEN))
+CARS = frozenset((CAR.HYUNDAI_IONIQ_5, CAR.HYUNDAI_IONIQ_5_N, CAR.HYUNDAI_KONA_EV_2ND_GEN))
 
 
 def topology_owned(cp):
@@ -89,6 +90,9 @@ class TorqueEVStartup(HyundaiECUStartup):
     self.prepared_cp = deepcopy(self.cp.to_dict())
     return self.cp
 
+  def communication_control_request(self):
+    return b'\x28\x01\x01' if self.cp.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else b'\x28\x83\x01'
+
   def commit_pending(self, ci, *, sources_current, control_current):
     if (self.outcome is not Outcome.PENDING or self.closed or not self.published or
         ci is not self.ci or not self.prepared_for(ci.CP) or not sources_current or
@@ -98,6 +102,12 @@ class TorqueEVStartup(HyundaiECUStartup):
       success = self._disable(self.callbacks[0], self._send, bus=self.bus, addr=self.address,
                               com_cont_req=self.communication_control_request())
       if not success or not self.disable_attempted:
+        if self.disable_response == "negative_communication_control":
+          carlog.warning("Torque EV pending ECU disable rejected by vehicle (car in READY), retaining stock longitudinal")
+          self.outcome = Outcome.STOCK_RESTORED
+          self.restored = True
+          self.cp = stock_copy(self.stock_cp)
+          return
         raise RuntimeError("Torque EV pending ECU disable was not sent successfully")
       self.outcome = Outcome.SENT_UNCONFIRMED
       self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
@@ -105,6 +115,8 @@ class TorqueEVStartup(HyundaiECUStartup):
         lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
       self.keeper.start()
     except BaseException:
+      if self.outcome is Outcome.STOCK_RESTORED:
+        return
       if self.keeper is not None:
         self.keeper.stop()
       try:
@@ -117,10 +129,11 @@ class TorqueEVStartup(HyundaiECUStartup):
         raise RuntimeError("Torque EV pending takeover failed; stock restoration unverified") from None
       raise
 
-  def _disable(self, can_recv, can_send, **kwargs):
+  def _disable(self, can_recv, can_send, com_cont_req=None, **kwargs):
     # Existing generic helper returns after send without inspecting negatives.
     # Preserve original explicit rejection vs expected suppressed silence.
     self.disable_response = None
+    req = com_cont_req or self.communication_control_request()
     for _ in range(10):
       try:
         session = self._query(can_send, can_recv, self.bus, [(self.address, None)], [b"\x10\x03"], [b"\x50\x03"])
@@ -128,13 +141,13 @@ class TorqueEVStartup(HyundaiECUStartup):
           time.sleep(0.1)
           continue
         time.sleep(0.05)
-        command = self._query(can_send, can_recv, self.bus, [(self.address, None)], [b"\x28\x83\x01"], [b""])
+        command = self._query(can_send, can_recv, self.bus, [(self.address, None)], [req], [b""])
         replies = command.get_data(0.1)
         if not replies:
           self.disable_response = "suppressed_reply_sent_unconfirmed"
           return True
         for payload in replies.values():
-          if payload == b"\x68\x03":
+          if payload in (b"\x68\x03", b"\x68\x01"):
             self.disable_response = "positive_communication_control"
           elif len(payload) == 3 and payload[:2] == b"\x7f\x28":
             self.disable_response = "negative_communication_control"

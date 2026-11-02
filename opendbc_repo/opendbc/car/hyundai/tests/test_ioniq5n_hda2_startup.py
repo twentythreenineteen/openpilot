@@ -56,18 +56,13 @@ def test_ioniq5n_specs_and_lateral_parameters():
   assert params_low.STEER_DELTA_DOWN == 8
 
 
-def test_ioniq5n_qualifies_for_generic_hda2_startup():
+from opendbc.car.hyundai.torque_ev_startup import TorqueEVStartup, candidate
+
+def test_ioniq5n_qualifies_for_torque_ev_startup():
   stock_cp = make_ioniq5n_stock_cp(alpha=False)
-  assert stock_cp.carFingerprint in CARS
-  assert not required(stock_cp)
-
-  long_cp = make_ioniq5n_long_cp()
-  assert required(long_cp)
-  assert qualified(long_cp)
-
-  owner = CarInterface.startup_owner(long_cp, (list, list), requested=True)
-  assert isinstance(owner, GenericHDA2Startup)
-  assert owner.communication_control_request() == b"\x28\x83\x01"
+  owner = CarInterface.startup_owner(stock_cp, (list, list), requested=True)
+  assert isinstance(owner, TorqueEVStartup)
+  assert owner.communication_control_request() == b"\x28\x01\x01"
 
 
 def test_prepare_when_not_admitted_safely_falls_back():
