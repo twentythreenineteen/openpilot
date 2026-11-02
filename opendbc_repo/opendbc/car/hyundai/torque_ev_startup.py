@@ -78,56 +78,8 @@ class TorqueEVStartup(HyundaiECUStartup):
     self.keeper = None
     self.handed_off = False
 
-  def prepare_when_controls_ready(self, *, admission):
-    """Leave factory SCC intact while the host's inactive producer starts."""
-    if self.outcome is not None or self.closed:
-      raise RuntimeError("Torque EV startup preparation is single-use")
-    if admission() is not True:
-      return self.prepare(admission=lambda: False)
-    self.admission = admission
-    self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
-    self.outcome = Outcome.PENDING
-    self.prepared_cp = deepcopy(self.cp.to_dict())
-    return self.cp
-
   def communication_control_request(self):
     return b'\x28\x01\x01' if self.cp.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else b'\x28\x83\x01'
-
-  def commit_pending(self, ci, *, sources_current, control_current):
-    if (self.outcome is not Outcome.PENDING or self.closed or not self.published or
-        ci is not self.ci or not self.prepared_for(ci.CP) or not sources_current or
-        not control_current or self.admission is None or self.admission() is not True):
-      raise RuntimeError("Torque EV takeover requires current diagnostic, source and inactive control admission")
-    try:
-      success = self._disable(self.callbacks[0], self._send, bus=self.bus, addr=self.address,
-                              com_cont_req=self.communication_control_request())
-      if not success or not self.disable_attempted:
-        if self.disable_response == "negative_communication_control":
-          carlog.warning("Torque EV pending ECU disable rejected by vehicle (car in READY), retaining stock longitudinal")
-          self.outcome = Outcome.STOCK_RESTORED
-          self.restored = True
-          self.cp = stock_copy(self.stock_cp)
-          return
-        raise RuntimeError("Torque EV pending ECU disable was not sent successfully")
-      self.outcome = Outcome.SENT_UNCONFIRMED
-      self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
-      self.keeper = self.keeper_factory(
-        lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
-      self.keeper.start()
-    except BaseException:
-      if self.outcome is Outcome.STOCK_RESTORED:
-        return
-      if self.keeper is not None:
-        self.keeper.stop()
-      try:
-        restored = not (self.session_attempted or self.disable_attempted) or self._restore()
-      except Exception:
-        restored = False
-      # CP is published: restoration never silently changes the LONG profile.
-      self.outcome = Outcome.ABORT_UNCERTAIN
-      if not restored:
-        raise RuntimeError("Torque EV pending takeover failed; stock restoration unverified") from None
-      raise
 
   def _disable(self, can_recv, can_send, com_cont_req=None, **kwargs):
     # Existing generic helper returns after send without inspecting negatives.
@@ -162,15 +114,41 @@ class TorqueEVStartup(HyundaiECUStartup):
     return False
 
   def prepare(self, *, admission):
-    super().prepare(admission=admission)
-    if self.outcome in (Outcome.STOCK_UNTOUCHED, Outcome.STOCK_RESTORED):
-      # Retain every stock field/marker, not a partly reconstructed fallback.
-      self.cp = self.stock_cp.as_reader().as_builder()
+    self.admission = admission
+    self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    if not admission():
+      self.outcome = Outcome.STOCK_UNTOUCHED
+      self.cp = stock_copy(self.stock_cp)
       self.prepared_cp = deepcopy(self.cp.to_dict())
-    elif self.outcome is Outcome.SENT_UNCONFIRMED:
-      self.keeper = self.keeper_factory(lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
+      return self.cp
+    try:
+      success = self._disable(self.callbacks[0], self._send, bus=self.bus, addr=self.address,
+                              com_cont_req=self.communication_control_request())
+    except Exception:
+      success = False
+    if success and self.disable_attempted:
+      self.outcome = Outcome.SENT_UNCONFIRMED
+      self.prepared_cp = deepcopy(self.cp.to_dict())
+      self.keeper = self.keeper_factory(
+        lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
       self.keeper.start()
+      return self.cp
+    if self.disable_response == "negative_communication_control":
+      carlog.warning("Torque EV ECU disable rejected by vehicle (car in READY), retaining stock longitudinal")
+      self.outcome = Outcome.STOCK_RESTORED
+      self.restored = True
+    else:
+      try:
+        restored = not (self.session_attempted or self.disable_attempted) or self._restore()
+      except Exception:
+        restored = False
+      self.outcome = Outcome.STOCK_RESTORED if restored else Outcome.ABORT_UNCERTAIN
+    self.cp = stock_copy(self.stock_cp)
+    self.prepared_cp = deepcopy(self.cp.to_dict())
     return self.cp
+
+  def commit_pending(self, ci, *, sources_current=True, control_current=True):
+    pass
 
   def finalize_aol_configuration(self, ci):
     if self.published or self.closed or ci is not self.ci or not self.ready:
