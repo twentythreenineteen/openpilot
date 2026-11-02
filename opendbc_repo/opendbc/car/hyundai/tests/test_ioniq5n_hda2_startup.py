@@ -1,11 +1,12 @@
 """Unit and integration tests for Hyundai IONIQ 5 N ccNC HDA-II startup and lateral configuration."""
 from copy import deepcopy
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from opendbc.car import gen_empty_fingerprint, structs
+from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
 from opendbc.car.hyundai.ecu_startup import Outcome
 from opendbc.car.hyundai.generic_hda2_startup import (
@@ -157,11 +158,25 @@ def test_prepare_ccnc_nrc22_clean_fallback_no_crash():
   assert prepared.pcmCruise
   assert prepared.safetyConfigs[0].safetyParam == 0x11
 
+
+def test_ccnc_fallback_is_logged():
+  """The STOCK_RESTORED fallback must not be silent."""
+  long_cp = make_ioniq5n_long_cp()
+  startup = GenericHDA2Startup(long_cp, (list, list.extend), keeper_factory=MockKeeper)
+
+  def mock_query(sender, receiver, bus, addresses, commands, responses):
+    cmd = commands[0]
+    sender([(0x730, bytes([len(cmd)]) + cmd + bytes(7 - len(cmd)), bus)])
+    mock_resp = MagicMock()
+    mock_resp.get_data.return_value = {(0x730, None): b"\x7f\x28\x22"}
+    return mock_resp
+
   startup._query = mock_query
 
-  # MUST NOT RAISE RuntimeError!
-  prepared = startup.prepare(admission=lambda: True)
+  with patch.object(carlog, 'warning') as logged:
+    startup.prepare(admission=lambda: True)
+
   assert startup.outcome is Outcome.STOCK_RESTORED
-  assert not prepared.openpilotLongitudinalControl
-  assert prepared.pcmCruise
-  assert prepared.safetyConfigs[0].safetyParam == 0x11
+  assert logged.call_count == 1
+  assert 'restoring stock longitudinal' in logged.call_args[0][0]
+

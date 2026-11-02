@@ -2,6 +2,7 @@ from copy import deepcopy
 from typing import Any
 import time
 
+from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
 from opendbc.car.hyundai.ecu_continuity import ContinuousECUStartup, StartupKeeper
 from opendbc.car.hyundai.ecu_startup import Outcome, stock_copy
@@ -89,8 +90,11 @@ class GenericHDA2Startup(RadarHDA2Startup):
   def prepare(self, *, admission):
     try:
       return super().prepare(admission=admission)
-    except Exception:
+    except Exception as e:
       if self.cp.flags & HyundaiFlags.CCNC:
+        # Silent by design for NRC 0x22, but any other cause must be visible.
+        carlog.warning(f'Ordinary HDA-II LONG takeover failed, restoring stock longitudinal: '
+                        f'{type(e).__name__}: {e}')
         self.outcome = Outcome.STOCK_RESTORED
         self.restored = True
         self.cp = stock_copy(self.stock_cp)
