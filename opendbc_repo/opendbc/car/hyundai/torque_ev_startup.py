@@ -10,7 +10,7 @@ import time
 from opendbc.car import Bus, make_tester_present_msg
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.canfd_stock_aol import qualified as stock_qualified
-from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome
+from opendbc.car.hyundai.ecu_startup import HyundaiECUStartup, Outcome, stock_copy
 from opendbc.car.hyundai.ecu_continuity import commit_controller_tester
 from opendbc.car.hyundai.ev9_keeper import EV9Keeper as StartupKeeper
 from opendbc.car.hyundai.values import CAR, HyundaiFlags, HyundaiSafetyFlags
@@ -85,6 +85,7 @@ class TorqueEVStartup(HyundaiECUStartup):
     # Existing generic helper returns after send without inspecting negatives.
     # Preserve original explicit rejection vs expected suppressed silence.
     self.disable_response = None
+    retries = 0
     req = com_cont_req or self.communication_control_request()
     for _ in range(10):
       try:
@@ -98,15 +99,25 @@ class TorqueEVStartup(HyundaiECUStartup):
         if not replies:
           self.disable_response = "suppressed_reply_sent_unconfirmed"
           return True
+        retry = False
         for payload in replies.values():
           if payload in (b"\x68\x03", b"\x68\x01"):
             self.disable_response = "positive_communication_control"
           elif len(payload) == 3 and payload[:2] == b"\x7f\x28":
+            # 0x22 conditionsNotCorrect: the ECU is still waking after ignition.
+            if payload[2] == 0x22 and retries < 5:
+              retries += 1
+              self.disable_response = "negative_communication_control_retry"
+              retry = True
+              break
             self.disable_response = "negative_communication_control"
             return False
           else:
             self.disable_response = "unexpected_or_malformed_reply"
             return False
+        if retry:
+          time.sleep(0.2)
+          continue
         return True
       except Exception:
         if self.disable_attempted:
@@ -135,6 +146,10 @@ class TorqueEVStartup(HyundaiECUStartup):
       return self.cp
     if self.disable_response == "negative_communication_control":
       carlog.warning("Torque EV ECU disable rejected by vehicle (car in READY), retaining stock longitudinal")
+      try:
+        self._restore()
+      except Exception:
+        pass
       self.outcome = Outcome.STOCK_RESTORED
       self.restored = True
     else:

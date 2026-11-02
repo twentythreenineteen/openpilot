@@ -1,3 +1,4 @@
+from opendbc.car.hyundai.canfd_stock_aol import LONG_EV_CARS
 from opendbc.car.hyundai.left_paddle import has_left_paddle
 from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
 from opendbc.car.hyundai.ioniq5pe_ready import PEReadySource
@@ -663,12 +664,14 @@ class CarState(CarStateBase):
         msgs.append(("CRUISE_BUTTONS_ALT", math.nan))
       if not (ev9_long_qualified(CP) or pe_long_qualified(CP)):
         (cam_msgs if CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else msgs).append(("SCC_CONTROL", 50))
-    elif torque_ev_scc_eligible(CP):
+    elif torque_ev_scc_eligible(CP) or CP.carFingerprint in LONG_EV_CARS:
       msgs.extend((("ACCELERATOR", 100), ("TCS", 50), ("WHEEL_SPEEDS", 100), ("MDPS", 100)))
       msgs.extend((("CRUISE_BUTTONS_ALT", math.nan), ("DOORS_SEATBELTS", math.nan),
                    ("STEERING_SENSORS", math.nan), ("BLINKERS", math.nan)))
       if self.gear_msg_canfd != "ACCELERATOR":
         msgs.append((self.gear_msg_canfd, 100))
+      if not CP.openpilotLongitudinalControl:
+        (cam_msgs if CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else msgs).append(("SCC_CONTROL", 50))
       cam_msgs.append(("CAM_0x362" if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT else "CAM_0x2a4", 20))
     elif CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and CP.openpilotLongitudinalControl:
       # The acknowledged ADAS takeover removes stock SCC from E-CAN. Require
