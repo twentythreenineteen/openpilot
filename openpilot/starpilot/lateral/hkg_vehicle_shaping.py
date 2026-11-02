@@ -408,6 +408,107 @@ IONIQ_5_FRICTION_JERK_DEADZONE_SPEED = 18.0
 
 IONIQ_5_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 3.0
 
+# IONIQ 5 N: 2205 kg and tireStiffnessFactor 1.3 vs the 5's 1948 kg / 0.65, so the
+# self-aligning torque differs enough to warrant its own shaping. Values start at the
+# 5's except the jerk deadzone, which is re-gated to the measured chatter band.
+IONIQ_5_N_BASE_LAT_ACCEL_FACTOR_MULT = 1.22
+
+IONIQ_5_N_FF_ONSET = 0.10
+
+IONIQ_5_N_FF_ONSET_WIDTH = 0.05
+
+IONIQ_5_N_FF_CUTOFF = 1.20
+
+IONIQ_5_N_FF_CUTOFF_WIDTH = 0.30
+
+IONIQ_5_N_TRANSITION_SPEED = 12.5
+
+IONIQ_5_N_PHASE_SCALE = 0.10
+
+IONIQ_5_N_FF_REDUCTION_LEFT = 0.15
+
+IONIQ_5_N_FF_REDUCTION_RIGHT = 0.25
+
+IONIQ_5_N_TURN_IN_BOOST_LEFT = 0.10
+
+IONIQ_5_N_TURN_IN_BOOST_RIGHT = 0.04
+
+IONIQ_5_N_UNWIND_TAPER_LEFT = 0.92
+
+IONIQ_5_N_UNWIND_TAPER_RIGHT = 1.04
+
+IONIQ_5_N_TURN_IN_THRESHOLD_REDUCTION_LEFT = 0.05
+
+IONIQ_5_N_TURN_IN_THRESHOLD_REDUCTION_RIGHT = 0.03
+
+IONIQ_5_N_UNWIND_THRESHOLD_INCREASE_LEFT = 0.46
+
+IONIQ_5_N_UNWIND_THRESHOLD_INCREASE_RIGHT = 0.50
+
+IONIQ_5_N_TURN_IN_FRICTION_BOOST_LEFT = 0.02
+
+IONIQ_5_N_TURN_IN_FRICTION_BOOST_RIGHT = 0.01
+
+IONIQ_5_N_UNWIND_FRICTION_REDUCTION_LEFT = 0.42
+
+IONIQ_5_N_UNWIND_FRICTION_REDUCTION_RIGHT = 0.44
+
+IONIQ_5_N_CENTER_TAPER_MAX = 0.18
+
+IONIQ_5_N_CENTER_TAPER_LAT = 0.16
+
+IONIQ_5_N_CENTER_TAPER_LAT_WIDTH = 0.04
+
+IONIQ_5_N_CENTER_TAPER_SPEED = 15.0
+
+IONIQ_5_N_CENTER_TAPER_SPEED_WIDTH = 2.2
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_BOOST_LEFT = 0.10
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_BOOST_RIGHT = 0.16
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_SPEED = 13.5
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_SPEED_WIDTH = 1.8
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_START = 1.10
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_END = 3.60
+
+IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_WIDTH = 0.30
+
+IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_BASE = 0.05
+
+IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_TURN_RELIEF = 0.95
+
+IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_SPEED = 8.0
+
+IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_SPEED_WIDTH = 0.8
+
+IONIQ_5_N_LOW_SPEED_CENTER_LAT = 0.40
+
+IONIQ_5_N_LOW_SPEED_CENTER_LAT_WIDTH = 0.10
+
+IONIQ_5_N_LOW_SPEED_CENTER_JERK = 0.40
+
+IONIQ_5_N_LOW_SPEED_CENTER_JERK_WIDTH = 0.12
+
+# The 5's deadzone only clears the shared center-chatter table above 18 m/s, so at the
+# 10-13 m/s band where the 5N chatters it is a no-op. Gate it at 8 m/s to win there.
+IONIQ_5_N_FRICTION_JERK_DEADZONE_MAX = 0.30
+
+IONIQ_5_N_FRICTION_JERK_DEADZONE_LAT = 1.25
+
+IONIQ_5_N_FRICTION_JERK_DEADZONE_LAT_WIDTH = 0.35
+
+IONIQ_5_N_FRICTION_JERK_DEADZONE_SPEED = 8.0
+
+IONIQ_5_N_FRICTION_JERK_DEADZONE_SPEED_WIDTH = 2.0
+
+IONIQ_5_N_LOW_SPEED_TURN_CURVATURE_BP = [0.005, 0.020]
+
+IONIQ_5_N_LOW_SPEED_TURN_OUTPUT_FLOOR = 0.30
+
 IONIQ_EV_OLD_BASE_LAT_ACCEL_FACTOR_MULT = 1.16
 
 IONIQ_EV_OLD_FF_REDUCTION_LEFT = 0.16
@@ -1132,6 +1233,117 @@ def get_ioniq_5_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: floa
   curve_weight = _ioniq_5_sigmoid((IONIQ_5_FRICTION_JERK_DEADZONE_LAT - abs(desired_lateral_accel)) /
                                    IONIQ_5_FRICTION_JERK_DEADZONE_LAT_WIDTH)
   return IONIQ_5_FRICTION_JERK_DEADZONE_MAX * speed_weight * curve_weight
+
+def _ioniq_5_n_sigmoid(x: float) -> float:
+  return _sigmoid(x)
+
+def _ioniq_5_n_low_speed_factor(v_ego: float) -> float:
+  return 1.0 / (1.0 + (max(v_ego, 0.0) / IONIQ_5_N_TRANSITION_SPEED) ** 2)
+
+def _ioniq_5_n_transition_phase(desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  return math.tanh((desired_lateral_accel * desired_lateral_jerk) / IONIQ_5_N_PHASE_SCALE)
+
+def _ioniq_5_n_side_value(desired_lateral_accel: float, left_value: float, right_value: float) -> float:
+  return left_value if desired_lateral_accel >= 0.0 else right_value
+
+def _ioniq_5_n_transition_envelope(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  abs_lateral_accel = abs(desired_lateral_accel)
+  onset = _ioniq_5_n_sigmoid((abs_lateral_accel - IONIQ_5_N_FF_ONSET) / IONIQ_5_N_FF_ONSET_WIDTH)
+  cutoff = _ioniq_5_n_sigmoid((IONIQ_5_N_FF_CUTOFF - abs_lateral_accel) / IONIQ_5_N_FF_CUTOFF_WIDTH)
+  return onset * cutoff * _ioniq_5_n_low_speed_factor(v_ego)
+
+def get_ioniq_5_n_ff_scale(desired_lateral_accel: float, desired_lateral_jerk: float, v_ego: float) -> float:
+  if desired_lateral_accel == 0.0:
+    return 1.0
+
+  envelope = _ioniq_5_n_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_n_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+  low_speed_factor = _ioniq_5_n_low_speed_factor(v_ego)
+  abs_lateral_accel = abs(desired_lateral_accel)
+
+  base_reduction = _ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_FF_REDUCTION_LEFT, IONIQ_5_N_FF_REDUCTION_RIGHT) * envelope
+  turn_in_boost = 1.0 + (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_TURN_IN_BOOST_LEFT, IONIQ_5_N_TURN_IN_BOOST_RIGHT) *
+                          turn_in_weight * (0.35 + 0.65 * low_speed_factor))
+  unwind_taper = 1.0 - (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_UNWIND_TAPER_LEFT, IONIQ_5_N_UNWIND_TAPER_RIGHT) *
+                         unwind_weight * (0.35 + 0.65 * low_speed_factor))
+  sustained_turn_in_scale = 0.0
+  if desired_lateral_accel * desired_lateral_jerk > 0.0:
+    sustained_speed_weight = _ioniq_5_n_sigmoid((max(v_ego, 0.0) - IONIQ_5_N_SUSTAINED_TURN_IN_FF_SPEED) /
+                                                 IONIQ_5_N_SUSTAINED_TURN_IN_FF_SPEED_WIDTH)
+    sustained_lat_onset = _ioniq_5_n_sigmoid((abs_lateral_accel - IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_START) /
+                                              IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_WIDTH)
+    sustained_lat_cutoff = _ioniq_5_n_sigmoid((IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_END - abs_lateral_accel) /
+                                               IONIQ_5_N_SUSTAINED_TURN_IN_FF_LAT_WIDTH)
+    sustained_turn_in_scale = (_ioniq_5_n_side_value(desired_lateral_accel,
+                                                      IONIQ_5_N_SUSTAINED_TURN_IN_FF_BOOST_LEFT,
+                                                      IONIQ_5_N_SUSTAINED_TURN_IN_FF_BOOST_RIGHT) *
+                                sustained_speed_weight * sustained_lat_onset * sustained_lat_cutoff)
+  return (1.0 + sustained_turn_in_scale) * (1.0 - base_reduction) * turn_in_boost * max(unwind_taper, 0.0)
+
+def get_ioniq_5_n_friction_threshold(v_ego: float, desired_lateral_accel: float = 0.0,
+                                     desired_lateral_jerk: float = 0.0) -> float:
+  base_threshold = get_hkg_canfd_base_friction_threshold(v_ego)
+  envelope = _ioniq_5_n_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_n_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+
+  threshold_scale = 1.0 - (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_TURN_IN_THRESHOLD_REDUCTION_LEFT,
+                                                  IONIQ_5_N_TURN_IN_THRESHOLD_REDUCTION_RIGHT) * envelope * turn_in_weight)
+  threshold_scale += (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_UNWIND_THRESHOLD_INCREASE_LEFT,
+                                             IONIQ_5_N_UNWIND_THRESHOLD_INCREASE_RIGHT) * envelope * unwind_weight)
+  return base_threshold * min(max(threshold_scale, 0.86), 1.18)
+
+def get_ioniq_5_n_friction_scale(v_ego: float, desired_lateral_accel: float, desired_lateral_jerk: float) -> float:
+  if desired_lateral_accel == 0.0 or desired_lateral_jerk == 0.0:
+    return 1.0
+
+  envelope = _ioniq_5_n_transition_envelope(v_ego, desired_lateral_accel, desired_lateral_jerk)
+  phase = _ioniq_5_n_transition_phase(desired_lateral_accel, desired_lateral_jerk)
+  turn_in_weight = max(phase, 0.0)
+  unwind_weight = max(-phase, 0.0)
+
+  friction_scale = 1.0
+  friction_scale += (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_TURN_IN_FRICTION_BOOST_LEFT,
+                                            IONIQ_5_N_TURN_IN_FRICTION_BOOST_RIGHT) * envelope * turn_in_weight)
+  friction_scale -= (_ioniq_5_n_side_value(desired_lateral_accel, IONIQ_5_N_UNWIND_FRICTION_REDUCTION_LEFT,
+                                            IONIQ_5_N_UNWIND_FRICTION_REDUCTION_RIGHT) * envelope * unwind_weight)
+  return min(max(friction_scale, 0.86), 1.04)
+
+def get_ioniq_5_n_center_taper_scale(desired_lateral_accel: float, v_ego: float) -> float:
+  speed_weight = _ioniq_5_n_sigmoid((v_ego - IONIQ_5_N_CENTER_TAPER_SPEED) / IONIQ_5_N_CENTER_TAPER_SPEED_WIDTH)
+  center_weight = _ioniq_5_n_sigmoid((IONIQ_5_N_CENTER_TAPER_LAT - abs(desired_lateral_accel)) /
+                                      IONIQ_5_N_CENTER_TAPER_LAT_WIDTH)
+  reduction = IONIQ_5_N_CENTER_TAPER_MAX * speed_weight * center_weight
+  return 1.0 - reduction
+
+def get_ioniq_5_n_low_speed_output_limit(desired_lateral_accel: float,
+                                         desired_lateral_jerk: float, v_ego: float,
+                                         desired_curvature: float = 0.0, output_torque: float = 0.0) -> float:
+  """Bound stop-transition center chatter without blunting actual turns."""
+  speed_weight = _ioniq_5_n_sigmoid((IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_SPEED - max(v_ego, 0.0)) /
+                                    IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_SPEED_WIDTH)
+  center_weight = _ioniq_5_n_sigmoid((IONIQ_5_N_LOW_SPEED_CENTER_LAT - abs(desired_lateral_accel)) /
+                                     IONIQ_5_N_LOW_SPEED_CENTER_LAT_WIDTH)
+  calm_weight = _ioniq_5_n_sigmoid((IONIQ_5_N_LOW_SPEED_CENTER_JERK - abs(desired_lateral_jerk)) /
+                                    IONIQ_5_N_LOW_SPEED_CENTER_JERK_WIDTH)
+  center_weight *= calm_weight
+  center_limit = (IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_BASE +
+                  IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_TURN_RELIEF * (1.0 - center_weight))
+  limit = 1.0 - speed_weight * (1.0 - center_limit)
+  if desired_curvature * output_torque > 0.0:
+    turn_weight = np.interp(abs(desired_curvature), IONIQ_5_N_LOW_SPEED_TURN_CURVATURE_BP, [0.0, 1.0])
+    limit += max(IONIQ_5_N_LOW_SPEED_TURN_OUTPUT_FLOOR - limit, 0.0) * turn_weight
+  return float(np.clip(limit, IONIQ_5_N_LOW_SPEED_OUTPUT_LIMIT_BASE, 1.0))
+
+def get_ioniq_5_n_friction_jerk_deadzone(v_ego: float, desired_lateral_accel: float) -> float:
+  speed_weight = _ioniq_5_n_sigmoid((max(v_ego, 0.0) - IONIQ_5_N_FRICTION_JERK_DEADZONE_SPEED) /
+                                     IONIQ_5_N_FRICTION_JERK_DEADZONE_SPEED_WIDTH)
+  curve_weight = _ioniq_5_n_sigmoid((IONIQ_5_N_FRICTION_JERK_DEADZONE_LAT - abs(desired_lateral_accel)) /
+                                     IONIQ_5_N_FRICTION_JERK_DEADZONE_LAT_WIDTH)
+  return IONIQ_5_N_FRICTION_JERK_DEADZONE_MAX * speed_weight * curve_weight
 
 def _ioniq_ev_old_sigmoid(x: float) -> float:
   return _sigmoid(x)

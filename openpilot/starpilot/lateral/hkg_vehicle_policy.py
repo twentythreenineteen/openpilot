@@ -8,6 +8,7 @@ from openpilot.starpilot.lateral.hkg_torque_policy import HKGShapedTorquePolicy,
 
 PROFILES = {
   'ioniq_5': (frozenset((CAR.HYUNDAI_IONIQ_5,)), shaping.IONIQ_5_BASE_LAT_ACCEL_FACTOR_MULT),
+  'ioniq_5_n': (frozenset((CAR.HYUNDAI_IONIQ_5_N,)), shaping.IONIQ_5_N_BASE_LAT_ACCEL_FACTOR_MULT),
   'ioniq_ev_old': (
     frozenset(
       (
@@ -86,6 +87,8 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
   def feedforward_context(self, value, setpoint, jerk, measurement, speed):
     if self.profile == 'ioniq_5':
       return value * shaping.get_ioniq_5_ff_scale(setpoint, jerk, speed) * shaping.get_ioniq_5_center_taper_scale(setpoint, speed)
+    if self.profile == 'ioniq_5_n':
+      return value * shaping.get_ioniq_5_n_ff_scale(setpoint, jerk, speed) * shaping.get_ioniq_5_n_center_taper_scale(setpoint, speed)
     if self.profile == 'ioniq_ev_old':
       return value * shaping.get_ioniq_ev_old_ff_scale(setpoint, jerk, speed) * shaping.get_ioniq_ev_old_center_taper_scale(setpoint, speed)
     if self.profile == 'sonata':
@@ -108,6 +111,10 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       return shaping.get_ioniq_5_friction_threshold(speed, setpoint, jerk), 1 + (
         shaping.get_ioniq_5_friction_scale(speed, setpoint, jerk) - 1
       ) * shaping.get_ioniq_5_center_taper_scale(setpoint, speed)
+    if self.profile == 'ioniq_5_n':
+      return shaping.get_ioniq_5_n_friction_threshold(speed, setpoint, jerk), 1 + (
+        shaping.get_ioniq_5_n_friction_scale(speed, setpoint, jerk) - 1
+      ) * shaping.get_ioniq_5_n_center_taper_scale(setpoint, speed)
     if self.profile == 'kia_niro_ev' and not self.steering_pressed:
       return shaping.get_kia_niro_ev_friction_threshold(speed, setpoint, jerk, self.future_lateral_accel), 1
     if self.profile == 'kia_niro_phev_2022':
@@ -142,6 +149,8 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
   def jerk_deadzone(self, setpoint, jerk, measurement, speed):
     if self.profile == 'ioniq_5':
       return shaping.get_ioniq_5_friction_jerk_deadzone(speed, setpoint)
+    if self.profile == 'ioniq_5_n':
+      return shaping.get_ioniq_5_n_friction_jerk_deadzone(speed, setpoint)
     if self.profile == 'kia_carnival':
       return shaping.get_kia_carnival_friction_jerk_deadzone(speed, setpoint, jerk)
     return 0.0
@@ -149,6 +158,10 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
   def output_context(self, value, setpoint, jerk, measurement, speed):
     if self.profile == 'ioniq_5':
       limit = shaping.get_ioniq_5_low_speed_output_limit(
+        setpoint, jerk, speed, self.requested_curvature if not self.steering_pressed and not self.previous_pressed else 0.0, value)
+      return float(np.clip(value, -limit, limit))
+    if self.profile == 'ioniq_5_n':
+      limit = shaping.get_ioniq_5_n_low_speed_output_limit(
         setpoint, jerk, speed, self.requested_curvature if not self.steering_pressed and not self.previous_pressed else 0.0, value)
       return float(np.clip(value, -limit, limit))
     if self.profile == 'kia_niro_phev_2022':
