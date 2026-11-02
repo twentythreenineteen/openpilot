@@ -27,7 +27,7 @@ def test_default_startup_raw_limits_and_live_factor_exactly_once():
   assert default_selection(cp).policy == 'sonata_hybrid'
   assert isinstance(controller.starpilot_extension.policy, SonataHybridTorquePolicy)
   assert controller.torque_params.latAccelFactor == pytest.approx(cp.lateralTuning.torque.latAccelFactor * 1.05)
-  assert controller.pid.pos_limit == pytest.approx(controller.lateral_accel_from_torque(controller.steer_max, cp.lateralTuning.torque))
+  assert controller.pid.pos_limit == pytest.approx(controller.lateral_accel_from_torque(controller.steer_max, controller.torque_params))
   for _ in range(3):
     controller.update_torque_parameters(3., .02, .12)
     assert controller.torque_params.latAccelFactor == pytest.approx(3.15)

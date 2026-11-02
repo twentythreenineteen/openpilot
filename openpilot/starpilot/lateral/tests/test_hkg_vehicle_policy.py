@@ -37,7 +37,7 @@ def test_exact_profile_defaults_and_saved_controller_selection(vehicle, profile,
   assert isinstance(policy, HKGVehicleTorquePolicy)
   assert policy.profile == profile
   assert controller.torque_params.latAccelFactor == pytest.approx(cp.lateralTuning.torque.latAccelFactor * factor)
-  assert controller.pid.pos_limit == pytest.approx(controller.lateral_accel_from_torque(controller.steer_max, cp.lateralTuning.torque))
+  assert controller.pid.pos_limit == pytest.approx(controller.lateral_accel_from_torque(controller.steer_max, controller.torque_params))
   for _ in range(3):
     controller.update_torque_parameters(3.0, 0.02, 0.12)
     assert controller.torque_params.latAccelFactor == pytest.approx(3.0 * factor)

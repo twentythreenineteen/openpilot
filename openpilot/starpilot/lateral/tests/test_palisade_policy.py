@@ -39,7 +39,7 @@ def test_default_choice_startup_and_repeated_live_factor(vehicle):
   assert controller.torque_params.latAccelFactor == pytest.approx(cp.lateralTuning.torque.latAccelFactor * .98)
   assert controller.pid._k_p == [INTERP_SPEEDS, KP_INTERP]
   assert controller.pid._k_i == ([0.], [KI])
-  raw_limit = controller.lateral_accel_from_torque(controller.steer_max, cp.lateralTuning.torque)
+  raw_limit = controller.lateral_accel_from_torque(controller.steer_max, controller.torque_params)
   assert controller.pid.pos_limit == pytest.approx(raw_limit)
   for _ in range(3):
     controller.update_torque_parameters(3., .02, .12)

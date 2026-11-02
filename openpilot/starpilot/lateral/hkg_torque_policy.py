@@ -46,8 +46,8 @@ class HKGShapedTorquePolicy:
     self.parent = parent
     self.dt = parent.dt
     parent.pid = PIDController([INTERP_SPEEDS, KP_INTERP], KI, rate=1 / self.dt)
-    parent.update_limits()
     parent.torque_params.latAccelFactor *= self.FACTOR_MULT
+    parent.update_limits()
     self.buffer_len = int(LAT_ACCEL_REQUEST_BUFFER_SECONDS / self.dt)
     self.curvature_buffer = deque([0.0] * self.buffer_len, maxlen=self.buffer_len)
     self.jerk_filter = FirstOrderFilter(0.0, 1 / (2 * np.pi * LP_FILTER_CUTOFF_HZ), self.dt)
