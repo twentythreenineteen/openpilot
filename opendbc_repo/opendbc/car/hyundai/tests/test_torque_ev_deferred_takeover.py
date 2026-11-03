@@ -58,8 +58,13 @@ def test_actual_card_defers_torque_ev_until_inactive_producer_and_then_native_rx
         return {(0x730, None): b""}
     return Query()
 
+  refresh = [None]
+
   def sleep(seconds):
     now[0] += round(seconds * 1e9)
+    # pandad republishes pandaStates continuously; model that during UDS retries
+    if refresh[0] is not None:
+      refresh[0]()
 
   def update_sm(host, command, stale=False):
     message = messaging.new_message("carControl", valid=True, logMonoTime=now[0] - (151_000_000 if stale else 0))
@@ -114,6 +119,7 @@ def test_actual_card_defers_torque_ev_until_inactive_producer_and_then_native_rx
         native.set_alternative_experience(card.CP.alternativeExperience)
         assert native.set_safety_hooks(int(config.safetyModel.raw), int(config.safetyParam)) == 0
       update_sm(card, command, stale=scenario == "stale_control")
+      refresh[0] = lambda: update_sm(card, command)
       if scenario in ("disable_negative", "disable_malformed", "restore_failure", "publisher_failure"):
         with pytest.raises(RuntimeError, match="pending"):
           card.controls_update(state, command, initialize_only=True)

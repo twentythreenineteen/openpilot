@@ -78,6 +78,18 @@ class TorqueEVStartup(HyundaiECUStartup):
     self.keeper = None
     self.handed_off = False
 
+  def prepare_when_controls_ready(self, *, admission):
+    """Leave factory SCC intact while the host's inactive producer starts."""
+    if self.outcome is not None or self.closed:
+      raise RuntimeError("Torque EV startup preparation is single-use")
+    if admission() is not True:
+      return self.prepare(admission=lambda: False)
+    self.admission = admission
+    self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    self.outcome = Outcome.PENDING
+    self.prepared_cp = deepcopy(self.cp.to_dict())
+    return self.cp
+
   def communication_control_request(self):
     return b'\x28\x83\x01'
 
@@ -162,8 +174,33 @@ class TorqueEVStartup(HyundaiECUStartup):
     self.prepared_cp = deepcopy(self.cp.to_dict())
     return self.cp
 
-  def commit_pending(self, ci, *, sources_current=True, control_current=True):
-    pass
+  def commit_pending(self, ci, *, sources_current, control_current):
+    if (self.outcome is not Outcome.PENDING or self.closed or not self.published or
+        ci is not self.ci or not self.prepared_for(ci.CP) or not sources_current or
+        not control_current or self.admission is None or self.admission() is not True):
+      raise RuntimeError("Torque EV takeover requires current diagnostic, source and inactive control admission")
+    try:
+      success = self._disable(self.callbacks[0], self._send, bus=self.bus, addr=self.address,
+                              com_cont_req=self.communication_control_request())
+      if not success or not self.disable_attempted:
+        raise RuntimeError("Torque EV pending ECU disable was not sent successfully")
+      self.outcome = Outcome.SENT_UNCONFIRMED
+      self.floor_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+      self.keeper = self.keeper_factory(
+        lambda: self.callbacks[1]([make_tester_present_msg(self.address, self.bus, suppress_response=True)]), clock=self.clock)
+      self.keeper.start()
+    except BaseException:
+      if self.keeper is not None:
+        self.keeper.stop()
+      try:
+        restored = not (self.session_attempted or self.disable_attempted) or self._restore()
+      except Exception:
+        restored = False
+      # CP is published: restoration never silently changes the LONG profile.
+      self.outcome = Outcome.ABORT_UNCERTAIN
+      if not restored:
+        raise RuntimeError("Torque EV pending takeover failed; stock restoration unverified") from None
+      raise
 
   def finalize_aol_configuration(self, ci):
     if self.published or self.closed or ci is not self.ci or not self.ready:
