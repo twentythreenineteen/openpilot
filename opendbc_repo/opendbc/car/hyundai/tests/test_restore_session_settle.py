@@ -44,6 +44,9 @@ def test_explicit_disable_rejection_waits_for_restoration_session_before_enable(
   now = [0.]
   session_responses = []
   owner = make_owner(kind, sent.extend)
+  # Torque EV retries 0x22 conditionsNotCorrect five times (0.2 s apart) before it
+  # rejects; every other owner rejects on the first negative reply.
+  retried = kind in ('ioniq5', 'kona2')
 
   def query(send, recv, bus, addresses, commands, responses):
     command = commands[0]
@@ -75,7 +78,9 @@ def test_explicit_disable_rejection_waits_for_restoration_session_before_enable(
         owner.prepare(admission=lambda: True)
       assert owner.outcome is Outcome.ABORT_UNCERTAIN and not owner.published
       assert all(command != b"\x28\x00\x01" for command, _ in requests)
-      assert sleeps == [.05]
+      # One session+command pair for the retried rejection, then nine sessions
+      # that the fixture refuses once the first one has been observed.
+      assert sleeps == ([.05, .2] + [.1] * 9 if retried else [.05])
       with pytest.raises(RuntimeError, match='cleanup could not confirm'):
         owner.close()
       assert not owner.restored and not owner.published
@@ -89,7 +94,7 @@ def test_explicit_disable_rejection_waits_for_restoration_session_before_enable(
       assert not result.openpilotLongitudinalControl and result.pcmCruise and not owner.published
       assert requests[-3:][0][0] == b"\x10\x03"
       assert requests[-2][0] == b"\x28\x00\x01" and requests[-1][0] == b"\x10\x01"
-      assert sleeps == [.05, .05]
+      assert sleeps == ([.05, .2] * 5 + [.05, .05] if retried else [.05, .05])
       assert requests[-2][1] - session_responses[-1] >= .049999
     finally:
       owner.close()

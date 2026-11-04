@@ -1,3 +1,4 @@
+from opendbc.car.hyundai.canfd_stock_aol import LONG_EV_CARS
 from opendbc.car.hyundai.left_paddle import has_left_paddle
 from opendbc.car.hyundai.ioniq5pe_long_profile import qualified as pe_long_qualified
 from opendbc.car.hyundai.ioniq5pe_ready import PEReadySource
@@ -675,12 +676,17 @@ class CarState(CarStateBase):
                    ("WHEEL_SPEEDS", 100), ("MDPS", 100), (self.gear_msg_canfd, 100),
                    ("STEERING_SENSORS", 100), ("DOORS_SEATBELTS", 10), ("BLINKERS", 10), ("SCC_CONTROL", math.nan)))
       cam_msgs.append(("CAM_0x362", 20))
-    elif torque_ev_scc_eligible(CP):
+    elif torque_ev_scc_eligible(CP) or CP.carFingerprint in LONG_EV_CARS:
       msgs.extend(((self.accelerator_msg_canfd, 100), ("TCS", 50), ("WHEEL_SPEEDS", 100), ("MDPS", 100)))
+      # stock_aol_qualified() above may already have queued CRUISE_BUTTONS_ALT;
+      # a second entry is a hard parser error ("Duplicate Message Check: 426").
+      msgs = [(name, frequency) for name, frequency in msgs if name != "CRUISE_BUTTONS_ALT"]
       msgs.extend((("CRUISE_BUTTONS_ALT", math.nan), ("DOORS_SEATBELTS", math.nan),
                    ("STEERING_SENSORS", math.nan), ("BLINKERS", math.nan)))
       if self.gear_msg_canfd != self.accelerator_msg_canfd:
         msgs.append((self.gear_msg_canfd, 100))
+      if not CP.openpilotLongitudinalControl:
+        (cam_msgs if CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else msgs).append(("SCC_CONTROL", 50))
       if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG:
         cam_msgs.append(("CAM_0x362" if CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT else "CAM_0x2a4", 20))
     elif CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and CP.openpilotLongitudinalControl:

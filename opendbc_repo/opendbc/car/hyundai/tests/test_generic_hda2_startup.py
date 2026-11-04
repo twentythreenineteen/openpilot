@@ -15,7 +15,6 @@ from openpilot.selfdrive.car.card import Car
 
 CARS = frozenset((
   CAR.GENESIS_G80_2ND_GEN_FL,
-  CAR.HYUNDAI_IONIQ_5_N,
   CAR.HYUNDAI_KONA_2ND_GEN,
   CAR.HYUNDAI_KONA_HEV_2ND_GEN,
   CAR.HYUNDAI_SANTA_CRUZ_1ST_GEN,

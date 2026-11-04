@@ -14,7 +14,7 @@ from opendbc.car.hyundai.values import CAR, HyundaiFlags
 
 
 @pytest.mark.parametrize('identity', [CAR.HYUNDAI_STARIA_4TH_GEN, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN,
-                                     CAR.KIA_NIRO_EV_2ND_GEN, CAR.HYUNDAI_IONIQ_5_N])
+                                     CAR.KIA_NIRO_EV_2ND_GEN])
 @pytest.mark.parametrize('alt', [False, True])
 @pytest.mark.parametrize('mutation', ['passive', 'dashcamOnly', 'notCar', 'brand', 'word', 'experience', 'angle',
                                       'hybrid', 'camera', 'ccnc', 'alt_buttons', 'gas_flag'])
@@ -75,7 +75,7 @@ def test_new_owner_never_substitutes_for_distinct_existing_receiver_recipe(ident
 
 
 @pytest.mark.parametrize('identity', [CAR.HYUNDAI_STARIA_4TH_GEN, CAR.KIA_CARNIVAL_2025, CAR.KIA_CARNIVAL_HEV_4TH_GEN,
-                                     CAR.KIA_NIRO_EV_2ND_GEN, CAR.HYUNDAI_IONIQ_5_N])
+                                     CAR.KIA_NIRO_EV_2ND_GEN])
 @pytest.mark.parametrize('fault', ['wrong_bus', 'stale', 'missing_scc', 'missing_camera', 'missing_buttons', 'missing_accelerator'])
 def test_stock_fallback_needs_independent_ev_buttons_camera_and_scc_sources(identity, fault):
   cp = CarInterface.get_params(identity, fingerprint(), firmware(), True, False, False)

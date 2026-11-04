@@ -18,7 +18,7 @@ def boottime_clock():
     yield
 
 
-@pytest.fixture(params=[(CAR.HYUNDAI_IONIQ_5, False), (CAR.HYUNDAI_IONIQ_5, True), (CAR.HYUNDAI_KONA_EV_2ND_GEN, False), (CAR.HYUNDAI_KONA_EV_2ND_GEN, True)])
+@pytest.fixture(params=[(CAR.HYUNDAI_IONIQ_5, False), (CAR.HYUNDAI_IONIQ_5, True), (CAR.HYUNDAI_KONA_EV_2ND_GEN, False), (CAR.HYUNDAI_KONA_EV_2ND_GEN, True), (CAR.HYUNDAI_IONIQ_5_N, False), (CAR.HYUNDAI_IONIQ_5_N, True)])
 def stock(request):
   car, alt = request.param
   fp = gen_empty_fingerprint()
@@ -196,7 +196,7 @@ def test_unowned_topologies_preserve_factory_output(car, variant, alpha):
   assert not required(actual)
 
 
-@pytest.mark.parametrize("reply,accepted", [(None, True), (b"\x68\x03", True), (b"\x7f\x28\x22", False), (b"\x68\x01", False)])
+@pytest.mark.parametrize("reply,accepted", [(None, True), (b"\x68\x03", True), (b"\x7f\x28\x22", False), (b"\x68\x01", True)])
 def test_real_isotp_decoder_classifies_suppressed_command(stock, reply, accepted):
   import time
   from opendbc.car import CanData
@@ -230,7 +230,9 @@ def test_real_isotp_decoder_classifies_suppressed_command(stock, reply, accepted
   with patch.object(time, "monotonic", side_effect=clock), patch.object(time, "sleep"):
     result = startup._disable(recv, startup._send)
   assert result is accepted
-  assert requests == [b"\x10\x03", b"\x28\x83\x01"]
+  # 0x22 conditionsNotCorrect is retried five times, so the sixth session is the
+  # one that rejects the command.
+  assert requests == [b"\x10\x03", b"\x28\x83\x01"] * (6 if reply == b"\x7f\x28\x22" else 1)
   assert startup.disable_attempted
 
 

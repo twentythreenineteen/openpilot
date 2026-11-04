@@ -279,7 +279,10 @@ GEAR_SOURCE_FAMILIES = (
   (CAR.KIA_CARNIVAL_2025, False),
   (CAR.KIA_CARNIVAL_HEV_4TH_GEN, True),
   (CAR.KIA_NIRO_EV_2ND_GEN, False),
-  (CAR.HYUNDAI_IONIQ_5_N, False),
+  # The IONIQ 5 N is torque-EV owned, not a generic HDA2 car, so it has no
+  # GenericHDA2Startup lifecycle. Gear-source selection is fingerprint driven
+  # (interface.py: 0x130 absent -> 0x40 -> 0x70), so the entries above still
+  # exercise both alternate gear messages.
 )
 CALLER_CASES += tuple((identity, hybrid, alternate, gear) for identity, hybrid in GEAR_SOURCE_FAMILIES
                       for alternate in (False, True) for gear in (0x40, 0x70))

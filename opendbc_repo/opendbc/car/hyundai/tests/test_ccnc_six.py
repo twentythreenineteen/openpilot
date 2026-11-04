@@ -73,12 +73,22 @@ class TestCcncSix(unittest.TestCase):
           self.assertFalse(cp.openpilotLongitudinalControl)
           self.assertEqual(bool(cp.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CCNC), not hda2)
           unavailable = params(car, hda2=hda2, alpha=True)
-          self.assertEqual(unavailable.alphaLongitudinalAvailable, not hda2)
+          # The IONIQ 5 N is torque-EV owned: the prepared startup owner alone
+          # promotes alpha long, independent of whether the car presents the
+          # HDA2 LKA message. Every other car here gates on the HDA2 flag.
+          expected_alpha = True if car == CAR.HYUNDAI_IONIQ_5_N else not hda2
+          self.assertEqual(unavailable.alphaLongitudinalAvailable, expected_alpha)
           self.assertEqual(unavailable.openpilotLongitudinalControl, not hda2)
           eligible = params(car, hda2=hda2, alpha=True, adas=True)
           self.assertTrue(eligible.alphaLongitudinalAvailable)
-          self.assertTrue(eligible.openpilotLongitudinalControl)
-          self.assertTrue(eligible.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG)
+          # Same torque-EV contract: with the HDA2 LKA message present the N
+          # stays on stock long until its startup owner commits, exactly like
+          # the stock IONIQ 5. Without it, the CCNC long path applies.
+          expected_long = not hda2 if car == CAR.HYUNDAI_IONIQ_5_N else True
+          self.assertEqual(eligible.openpilotLongitudinalControl, expected_long)
+          # The LONG safety flag tracks the promoted long state, not the car.
+          self.assertEqual(bool(eligible.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.LONG),
+                           expected_long)
 
   def test_carnival_alt_resume_only_with_observed_source_and_stock_long(self):
     for car in CARNIVALS:
