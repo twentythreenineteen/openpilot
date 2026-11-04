@@ -2,6 +2,7 @@ import pytest
 
 from opendbc.can import CANPacker
 from opendbc.car import Bus, CanData, gen_empty_fingerprint, structs
+from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR, DBC
 
@@ -71,6 +72,20 @@ def test_sibling_ioniq5_n_does_not_inherit_pe_corner_extension():
   _, ci, packer = setup(CAR.HYUNDAI_IONIQ_5_N)
   result = ci.update([(1_000_000_000, [corner(packer, 0x18)])])
   assert not result.leftBlindspot and not result.rightBlindspot
+
+
+def test_sibling_ioniq5_n_adas_cmd_cannot_invalidate_can_validity():
+  # The N disables the ADAS ECU that sources 0x1BA, so a live-alive requirement
+  # would drop CAN validity the instant the disable lands.
+  # 0x36A BLINDSPOTS_FRONT_CORNER_2 is deliberately not subscribed here: the N
+  # does broadcast it (20 Hz, unaffected by the disable), but wiring it into
+  # blind-spot state is a separate receive-only change, tracked as Phase 4b.
+  cp, _, _ = setup(CAR.HYUNDAI_IONIQ_5_N)
+  parsers = CarState(cp).get_can_parsers(cp)
+  states = [p.message_states[0x1BA] for p in parsers.values() if 0x1BA in p.message_states]
+  assert states
+  assert all(s.ignore_alive for s in states)
+  assert not any("BLINDSPOTS_FRONT_CORNER_2" in p.message_states for p in parsers.values())
 
 
 def test_existing_rear_bsm_is_preserved_independently_of_invalid_corner():

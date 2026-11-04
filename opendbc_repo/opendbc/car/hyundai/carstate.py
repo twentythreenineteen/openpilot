@@ -623,6 +623,10 @@ class CarState(CarStateBase):
       # The separately gated exact-long controller may use a fresh source for
       # paired dashboard status; parsing alone never authorizes TX.
       msgs.extend((("ADAS_CMD_50_50ms", math.nan), ("BLINDSPOTS_FRONT_CORNER_2", math.nan)))
+    elif CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and CP.deprecated.enableBsm:
+      # The N disables the ADAS ECU that sources this frame, so a live-alive
+      # requirement would invalidate CAN validity the instant the disable lands.
+      msgs.append(("ADAS_CMD_50_50ms", math.nan))
     if CP.flags & HyundaiFlags.EV:
       msgs.append(("MANUAL_SPEED_LIMIT_ASSIST", math.nan))
     sign_subscription = ("FR_CMR_02_100ms", math.nan)
