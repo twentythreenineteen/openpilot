@@ -194,6 +194,10 @@ class TorqueEVStartup(HyundaiECUStartup):
     ):
       raise RuntimeError("Torque EV prepared safety profile cannot be finalized")
     configs[0]["safetyParam"] |= 0x0800
+    # CCNC cars also carry bit 15, which the AOL policy adds. Mirror it here or
+    # this comparison rejects the CP the card just built (0x8895 vs 0x0895).
+    if ci.CP.flags & HyundaiFlags.CCNC:
+      configs[0]["safetyParam"] |= 0x8000
     expected["alternativeExperience"] = 32
     if ci.CP.to_dict() != expected:
       raise RuntimeError("Torque EV AOL finalization changed unrelated CarParams")

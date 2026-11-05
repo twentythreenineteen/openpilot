@@ -1396,6 +1396,14 @@ static safety_config hyundai_canfd_init_validated(uint16_t supplied_param) {
 #ifdef ALLOW_DEBUG
   const bool gv60_long_requested = hyundai_canfd_gv60_long_param(param);
   const bool ioniq6_long_requested = GET_FLAG(param, 32768U) && !gv60_long_requested;
+#else
+  // GV60 long is a debug-tier profile and every remaining read of
+  // gv60_long_requested sits inside a debug guard, so release omits the variable
+  // entirely rather than defining an unused one (-Werror).
+  // Exact word, not GET_FLAG(32768): on release a bit-15 test would hand every
+  // bit-15 word the N's 19-frame table. Measured: 0x8815/0x8015 also reached a
+  // long table with the flag test; only 0x8895 moves with this.
+  const bool ioniq6_long_requested = (param == 0x8895U);
 #endif
   // Model selector bits are shared with ordinary-mode metadata, but never passed
   // to common init as those meanings when the angle discriminator is present.
@@ -1412,8 +1420,11 @@ static safety_config hyundai_canfd_init_validated(uint16_t supplied_param) {
     // Ordinary safety parameters have no profile-specific bits to strip.
   }
 #else
+  // Bit 15 is HYUNDAI_PARAM_CAN_REFRESH_MSGS to common init (hyundai_common.h:99),
+  // so the N's word must have it stripped here or refresh flips on. Measured:
+  // stripping 2048 alone gives refresh=1; stripping 32768|2048 gives refresh=0.
   const uint16_t common_param = angle_requested ? (uint16_t)(param & (uint16_t)~angle_strip_mask) :
-                                (uint16_t)(ioniq6_stock_aol_requested ? (param & (uint16_t)~2048U) : param);
+                                (uint16_t)((ioniq6_stock_aol_requested || ioniq6_long_requested) ? (param & (uint16_t)~(32768U | 2048U)) : param);
 #endif
 
   static const CanMsg HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS[] = {
@@ -1561,14 +1572,20 @@ static safety_config hyundai_canfd_init_validated(uint16_t supplied_param) {
   hyundai_canfd_angle_steering = false;
   hyundai_canfd_angle_observed_adas = false;
   hyundai_canfd_angle_model = 0U;
-#ifdef ALLOW_DEBUG
+  // Set outside the guard: the N's long inventory must exist on release too.
+  // torque_ev_long stays inside, so its release value is unchanged (false).
   hyundai_canfd_ioniq6_long = ioniq6_long_requested;
+#ifdef ALLOW_DEBUG
   hyundai_canfd_torque_ev_long = (param == 0x0015U) || (param == 0x0095U) || (torque_long_aol_requested && GET_FLAG(param, 16U) && !carnival_long_requested) || gv60_long_requested;
 #endif
   hyundai_torque_aol_cancel_preserves_lateral = ioniq6_stock_aol_requested || torque_long_aol_requested ||
                                                (param == 0x8815U) || (param == 0x8895U);
   aol_optional_release_capable = torque_long_aol_requested;
   hyundai_stock_torque_aol = ioniq6_stock_aol_requested;
+  // NOTE: 0x8895 attaches the AOL policy by EXACT-WORD EQUALITY here, not through
+  // hyundai_canfd_stock_torque_aol_param(). That predicate reads 0x8895 as
+  // base = 0x8095 (bit 11 is set) and returns false, so this literal is the only
+  // thing keeping the policy attached. Do not fold it into the predicate.
   aol_ioniq6_long = ioniq6_stock_aol_requested || torque_long_aol_requested || (param == 0x8815U) || (param == 0x8895U);
   if (aol_ioniq6_long) {
     static const AolSafetyPolicy aol_ioniq6_policy = {
@@ -1766,7 +1783,6 @@ static safety_config hyundai_canfd_init_validated(uint16_t supplied_param) {
     }
     }
   } else
-#ifdef ALLOW_DEBUG
   if (hyundai_canfd_ioniq6_long) {
     // Exact HDA-II EV source and standard-button topology. Stock SCC 0x1A0
     // must already be silent from the prepublication UDS transaction.
@@ -1806,11 +1822,17 @@ static safety_config hyundai_canfd_init_validated(uint16_t supplied_param) {
       {0x200, 1, 8, .check_relay = false},
       {0x345, 1, 8, .check_relay = false},
       {0x1DA, 1, 32, .check_relay = false},
+      // CCNC support frames for the IONIQ 5 N's bit-15 word (0x8895). Measured:
+      // 0x161/0x162/0x38C were absent from this table, so 0x8895 reached only
+      // 2 of 5 frames. Plain initialisers only -- BUILD_SAFETY_CFG reads
+      // sizeof(tx)/sizeof(tx[0]), which needs a real array, never a pointer.
+      {0x161, 1, 32, .check_relay = false},
+      {0x162, 1, 32, .check_relay = false},
+      {0x38C, 1, 32, .check_relay = false},
     };
     ret = ((param == 0x8095U) || (param == 0x8895U)) ? BUILD_SAFETY_CFG(ioniq6_long_rx_checks, ioniq6_long_lkas_alt_tx_msgs) :
                                                       BUILD_SAFETY_CFG(ioniq6_long_rx_checks, ioniq6_long_lkas_tx_msgs);
   } else
-#endif
   if (hyundai_longitudinal) {
     if (hyundai_canfd_lka_steer_msg) {
       static const RxCheck hyundai_canfd_lka_steer_msg_long_rx_checks[] = {
@@ -2248,7 +2270,9 @@ static safety_config hyundai_canfd_init(uint16_t param) {
                      (param == 0x8815U) || (param == 0x8895U) ||
                      hyundai_canfd_gv60_long_param(param);
 #else
-  const bool valid = !GET_FLAG(param, 32768U);
+  // The N's word has bit 15 set, so the blanket bit-15 rejection would drop it
+  // before init. Exact word only: every other bit-15 word stays rejected.
+  const bool valid = !GET_FLAG(param, 32768U) || (param == 0x8895U);
 #endif
   safety_config ret = {0};
   const bool marker_valid = GET_FLAG(param, 16384U) || !GET_FLAG(param, 2048U) ||

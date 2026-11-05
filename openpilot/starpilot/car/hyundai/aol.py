@@ -146,8 +146,14 @@ def _policy_for(CP) -> AolVehiclePolicy:
       alternative_experience_addition=AOL_EXPERIENCE,
     )
   if qualified_canfd_long(CP):
+    # Bit 15 (0x8000) is the CCNC-long selector in safety: it turns the word into
+    # 0x8895, which is the only word that both attaches the AOL policy and reaches
+    # the CCNC support frames. Only CCNC cars get it, so the IONIQ 5 and Kona EV
+    # 2nd Gen stay byte-identical at 0x0895. This is the branch the candidate CP
+    # actually reaches -- qualified_canfd_stock below is never hit for these cars.
+    _add = 0x0800 | (0x8000 if CP.flags & HyundaiFlags.CCNC else 0)
     return AolVehiclePolicy(intent_supported=True, settings_supported=True, runtime_supported=True,
-                            normal_runtime_supported=True, explicit_latch=True, safety_param_addition=0x0800,
+                            normal_runtime_supported=True, explicit_latch=True, safety_param_addition=_add,
                             alternative_experience_addition=32)
   if qualified_canfd_stock(CP):
     return AolVehiclePolicy(

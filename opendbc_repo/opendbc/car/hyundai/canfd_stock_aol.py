@@ -131,6 +131,10 @@ def qualified_long(cp, *, marked_only=False):
     if not raw & 0x2000:
       return False
     raw &= ~0x2000
-  return (raw == (word | 0x804) and cp.alternativeExperience == 32) or (
+  # Bit 15 is the CCNC-long selector the AOL policy adds on top of the stock base
+  # word; it is not part of _base_word, so a CCNC car's marked word is
+  # word|0x804|0x8000. Exact equality is kept -- the bit is added, not masked.
+  ccnc_long = 0x8000 if cp.flags & HyundaiFlags.CCNC else 0
+  return (raw == (word | 0x804 | ccnc_long) and cp.alternativeExperience == 32) or (
     not marked_only and raw == (word | 4) and cp.alternativeExperience == 0
   )
