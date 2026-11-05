@@ -194,3 +194,40 @@ def test_ev6_taper_keeps_low_speed_and_substantial_curve_effect_small():
         assert old - actual < .002
       if abs(acceleration) >= 1.:
         assert old - actual < .00002
+
+
+def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
+  from types import SimpleNamespace
+  from openpilot.cereal import log
+  from opendbc.car.vehicle_model import VehicleModel
+  from opendbc.car.hyundai.values import CarControllerParams
+
+  cp = interfaces[CAR.HYUNDAI_IONIQ_5_N].get_non_essential_params(CAR.HYUNDAI_IONIQ_5_N)
+  assert cp.steerRatio == pytest.approx(12.4)
+  assert cp.lateralTuning.torque.latAccelFactor == pytest.approx(1.95)
+  assert cp.lateralTuning.torque.friction == pytest.approx(0.09)
+
+  low_limits = CarControllerParams(cp, vEgoRaw=10.0)
+  high_limits = CarControllerParams(cp, vEgoRaw=20.0)
+  assert (low_limits.STEER_MAX, low_limits.STEER_DRIVER_ALLOWANCE, low_limits.STEER_THRESHOLD,
+          low_limits.STEER_DELTA_UP, low_limits.STEER_DELTA_DOWN) == (384, 100, 150, 4, 8)
+  assert (high_limits.STEER_MAX, high_limits.STEER_DELTA_UP, high_limits.STEER_DELTA_DOWN) == (384, 2, 3)
+
+  controller = LatControlTorque(cp.as_reader(), interfaces[CAR.HYUNDAI_IONIQ_5_N](cp), 0.01, controller_mode=ControllerMode.STARPILOT)
+  policy = controller.starpilot_extension.policy
+  assert policy.profile == 'ioniq_5_n'
+  assert controller.pid._k_i == ([0], [0.15])
+  assert controller.pid._k_d[1] == [0.05, 0.10, 0.14]
+
+  vm = VehicleModel(cp)
+  params = log.VehicleParameters.new_message(angleOffsetDeg=0.0, roll=0.0)
+  cs = SimpleNamespace(vEgo=10.0, steeringAngleDeg=0.0, steeringPressed=False)
+  controller.update(True, cs, vm, params, False, 0.0, False, 0.2)
+  cs.steeringAngleDeg = -4.0
+  _, _, moving = controller.update(True, cs, vm, params, False, 0.0, False, 0.2)
+  assert moving.d < 0.0
+
+  controller.pid.i = 0.25
+  reduced = policy.output_context(0.4, 0.3, -0.5, 0.8, 12.0)
+  assert abs(reduced) < 0.4
+  assert controller.pid.i == pytest.approx(0.25 * 0.92)

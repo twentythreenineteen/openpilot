@@ -28,14 +28,17 @@ class CarControllerParams:
     self.STEER_STEP = 1  # 100 Hz
 
     if CP.flags & HyundaiFlags.CANFD:
-      self.STEER_MAX = 270 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else 409
-      self.STEER_DRIVER_ALLOWANCE = 250
+      self.STEER_MAX = 270 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (384 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 409)
+      self.STEER_DRIVER_ALLOWANCE = 100 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
       self.STEER_DRIVER_MULTIPLIER = 2
-      self.STEER_THRESHOLD = 250
+      self.STEER_THRESHOLD = 150 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
-      if (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and 0 <= vEgoRaw < 15 and
-          CP.carFingerprint != CAR.KIA_CARNIVAL_HEV_4TH_GEN):
+      if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and 0 <= vEgoRaw < 15:
+        self.STEER_DELTA_UP = 4
+        self.STEER_DELTA_DOWN = 8
+      elif (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and 0 <= vEgoRaw < 15 and
+            CP.carFingerprint != CAR.KIA_CARNIVAL_HEV_4TH_GEN):
         self.STEER_DELTA_UP = 10
         self.STEER_DELTA_DOWN = 8
 
@@ -517,7 +520,7 @@ class CAR(Platforms):
       HyundaiCarDocs("Hyundai Ioniq 5 N (with HDA II) 2025",
                      car_parts=CarParts.common([CarHarness.hyundai_s, CarHarness.hyundai_q]))
     ],
-    CarSpecs(mass=2205, wheelbase=3.00, steerRatio=14.26, tireStiffnessFactor=1.3),
+    CarSpecs(mass=2205, wheelbase=3.00, steerRatio=12.4, tireStiffnessFactor=1.3),
     flags=HyundaiFlags.EV | HyundaiFlags.CCNC,
     radar_dbc=HYUNDAI_MRR35_RADAR_DBC,
   )
