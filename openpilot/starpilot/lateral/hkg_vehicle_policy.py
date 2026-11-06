@@ -80,7 +80,7 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       from openpilot.starpilot.lateral.gv70_shaping import GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP
       from openpilot.starpilot.lateral.torque_shaping import INTERP_SPEEDS, KP_INTERP
       parent.pid = PIDController([INTERP_SPEEDS, KP_INTERP], 0.15,
-                                 [GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP, [0.05, 0.10, 0.14]],
+                                 [GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP, [0.08, 0.08, 0.06]],
                                  rate=1 / self.dt)
       parent.update_limits()
 
@@ -107,8 +107,12 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       return value * shaping.get_kia_forte_ff_scale(setpoint, jerk, speed) * shaping.get_kia_forte_center_taper_scale(setpoint, speed)
     if self.profile == 'kia_ev6':
       return value * shaping.get_kia_ev6_ff_scale(setpoint, jerk, speed) * shaping.get_kia_ev6_center_taper_scale(setpoint, speed)
-    if self.profile in ('kia_carnival', 'ioniq_5_n'):
+    if self.profile == 'kia_carnival':
       return value * shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)
+    if self.profile == 'ioniq_5_n':
+      if abs(setpoint) < 1.0:
+        return value * (1.0 - 0.5 * (1.0 - shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)))
+      return value
     return value
 
   def friction_context(self, setpoint, jerk, measurement, speed):
@@ -146,7 +150,8 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     return (base, 1.0)
 
   def pid_error_context(self, error):
-    return error * (1.0 - shaping.KIA_CARNIVAL_HEV_CENTER_ERROR_REDUCTION * self.hev_center_weight)
+    scale = 0.72 if self.profile == 'ioniq_5_n' else 1.0
+    return error * scale * (1.0 - shaping.KIA_CARNIVAL_HEV_CENTER_ERROR_REDUCTION * self.hev_center_weight)
 
   def jerk_deadzone(self, setpoint, jerk, measurement, speed):
     if self.profile == 'ioniq_5':
@@ -167,16 +172,19 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     if self.profile == 'kia_ev6':
       return (value * shaping.get_kia_ev6_low_speed_center_taper_scale(setpoint, speed) *
               shaping.get_kia_ev6_center_output_scale(setpoint, speed, self.future_lateral_accel))
-    if self.profile in ('kia_carnival', 'ioniq_5_n'):
-      if (self.profile == 'ioniq_5_n' and not self.steering_pressed and
-          setpoint * jerk < 0.0 and setpoint * measurement > 0.0 and abs(measurement) > abs(setpoint)):
-        self.parent.pid.i *= 0.92
+    if self.profile == 'kia_carnival':
       return (
         value
         * shaping.get_kia_carnival_center_taper_scale(setpoint, speed)
         * shaping.get_kia_carnival_unwind_output_scale(
           setpoint, measurement, jerk, speed,
-          output_torque=value if (self.carnival_hev or self.profile == 'ioniq_5_n') and not self.steering_pressed and not self.previous_pressed else None)
+          output_torque=value if self.carnival_hev and not self.steering_pressed and not self.previous_pressed else None)
+        * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
+      )
+    if self.profile == 'ioniq_5_n':
+      return (
+        value
+        * shaping.get_kia_carnival_center_taper_scale(setpoint, speed)
         * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
       )
     if self.profile == 'tucson_4th_gen':

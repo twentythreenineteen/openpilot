@@ -29,14 +29,14 @@ class CarControllerParams:
 
     if CP.flags & HyundaiFlags.CANFD:
       self.STEER_MAX = 270 if CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING else (384 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 409)
-      self.STEER_DRIVER_ALLOWANCE = 100 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
+      self.STEER_DRIVER_ALLOWANCE = 200 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
       self.STEER_DRIVER_MULTIPLIER = 2
-      self.STEER_THRESHOLD = 150 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
+      self.STEER_THRESHOLD = 220 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else 250
       self.STEER_DELTA_UP = 2
       self.STEER_DELTA_DOWN = 3
       if CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and 0 <= vEgoRaw < 15:
         self.STEER_DELTA_UP = 4
-        self.STEER_DELTA_DOWN = 8
+        self.STEER_DELTA_DOWN = 5
       elif (not CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING and 0 <= vEgoRaw < 15 and
             CP.carFingerprint != CAR.KIA_CARNIVAL_HEV_4TH_GEN):
         self.STEER_DELTA_UP = 10
