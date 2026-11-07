@@ -80,7 +80,7 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       from openpilot.starpilot.lateral.gv70_shaping import GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP
       from openpilot.starpilot.lateral.torque_shaping import INTERP_SPEEDS, KP_INTERP
       parent.pid = PIDController([INTERP_SPEEDS, KP_INTERP], 0.15,
-                                 [GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP, [0.08, 0.08, 0.06]],
+                                 [GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP, [0.10, 0.09, 0.06]],
                                  rate=1 / self.dt)
       parent.update_limits()
 
@@ -110,6 +110,9 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     if self.profile == 'kia_carnival':
       return value * shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)
     if self.profile == 'ioniq_5_n':
+      if setpoint * jerk > 0.0 and abs(setpoint) < 1.4:
+        turn_in_weight = min(abs(jerk) / 0.8, 1.0) * (1.0 - abs(setpoint) / 1.4)
+        return value * (1.0 - 0.18 * turn_in_weight)
       if abs(setpoint) < 1.0:
         return value * (1.0 - 0.5 * (1.0 - shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)))
       return value
@@ -156,8 +159,13 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
   def jerk_deadzone(self, setpoint, jerk, measurement, speed):
     if self.profile == 'ioniq_5':
       return shaping.get_ioniq_5_friction_jerk_deadzone(speed, setpoint)
-    if self.profile in ('kia_carnival', 'ioniq_5_n'):
+    if self.profile == 'kia_carnival':
       return shaping.get_kia_carnival_friction_jerk_deadzone(speed, setpoint, jerk)
+    if self.profile == 'ioniq_5_n':
+      base_dz = shaping.get_kia_carnival_friction_jerk_deadzone(speed, setpoint, jerk)
+      if setpoint * jerk > 0.0 and abs(setpoint) < 0.85:
+        return max(base_dz, 0.25 * (1.0 - abs(setpoint) / 0.85))
+      return base_dz
     return 0.0
 
   def output_context(self, value, setpoint, jerk, measurement, speed):
@@ -182,8 +190,12 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
         * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
       )
     if self.profile == 'ioniq_5_n':
+      turn_in_scale = 1.0
+      if setpoint * jerk > 0.0 and abs(setpoint) < 1.25 and abs(jerk) > 0.25:
+        turn_in_scale = 1.0 - 0.10 * min((abs(jerk) - 0.25) / 0.65, 1.0) * (1.0 - abs(setpoint) / 1.25)
       return (
         value
+        * turn_in_scale
         * shaping.get_kia_carnival_center_taper_scale(setpoint, speed)
         * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
       )

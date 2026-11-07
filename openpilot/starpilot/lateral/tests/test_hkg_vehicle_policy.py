@@ -217,7 +217,7 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
   policy = controller.starpilot_extension.policy
   assert policy.profile == 'ioniq_5_n'
   assert controller.pid._k_i == ([0], [0.15])
-  assert controller.pid._k_d[1] == [0.08, 0.08, 0.06]
+  assert controller.pid._k_d[1] == [0.10, 0.09, 0.06]
 
   vm = VehicleModel(cp)
   params = log.VehicleParameters.new_message(angleOffsetDeg=0.0, roll=0.0)
@@ -229,5 +229,9 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
 
   assert policy.feedforward_context(0.8, 1.5, -0.8, 1.9, 12.0) == pytest.approx(0.8)
   assert policy.feedforward_context(0.8, 0.4, -0.8, 0.9, 12.0) < 0.8
+  assert policy.feedforward_context(0.8, 0.5, 0.7, 0.3, 12.0) < 0.8
+  assert policy.feedforward_context(0.8, 1.5, 0.7, 1.3, 12.0) == pytest.approx(0.8)
+  assert policy.jerk_deadzone(0.4, 0.6, 0.2, 10.0) > 0.10
+  assert policy.output_context(0.6, 0.5, 0.7, 0.3, 10.0) < policy.output_context(0.6, 0.5, 0.1, 0.3, 10.0)
   policy.hev_center_weight = 0.0
   assert policy.pid_error_context(1.0) == pytest.approx(0.72)
