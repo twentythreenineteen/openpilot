@@ -241,12 +241,17 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
   second_out = policy.output_context(0.6, 0.5, 0.1, 0.3, 10.0)
   assert first_out < second_out
   policy.hev_center_weight = 0.0
+  policy.last_speed = 15.0
   policy.last_measurement = 0.0
   policy.last_setpoint = 0.0
+  policy.steering_angle_deg = 0.0
   assert policy.pid_error_context(1.0) == pytest.approx(0.72)
   policy.last_speed = 3.5
   policy.last_measurement = -2.4
   policy.last_setpoint = -0.2
+  policy.steering_angle_deg = 240.0
   assert abs(policy.pid_error_context(2.2)) < 0.72 * 2.2 * 0.35
-  policy.steering_rate_deg = 220.0
-  assert policy.output_context(1.0, -0.1, 2.0, -2.2, 3.5) < 0.0
+  policy.steering_rate_deg = 100.0
+  assert policy.output_context(1.0, -0.1, 2.0, -2.2, 3.5) == pytest.approx(0.50)
+  policy.steering_rate_deg = 320.0
+  assert policy.output_context(1.0, -0.1, 2.0, -2.2, 3.5) == pytest.approx(0.05)

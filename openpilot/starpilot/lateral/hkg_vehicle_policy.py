@@ -82,6 +82,7 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       self.base_kd_bp = list(GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP)
       self.base_kd_v = [0.12, 0.10, 0.07]
       self.prev_output = 0.0
+      self.steering_angle_deg = 0.0
       self.steering_rate_deg = 0.0
       self.last_speed = 0.0
       self.last_setpoint = 0.0
@@ -108,6 +109,7 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     self.future_lateral_accel = curvature * cs.vEgo ** 2
     self.steering_pressed = bool(cs.steeringPressed)
     if self.profile == 'ioniq_5_n':
+      self.steering_angle_deg = float(getattr(cs, 'steeringAngleDeg', 0.0))
       self.steering_rate_deg = abs(float(getattr(cs, 'steeringRateDeg', 0.0)))
       self.last_speed = float(cs.vEgo)
       self.last_vm_sR = float(getattr(vm, 'sR', 13.0))
@@ -147,8 +149,8 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     if self.profile == 'ioniq_5_n':
       self.last_setpoint = float(setpoint)
       self.last_measurement = float(measurement)
-      fade = float(np.interp(speed, [0.0, 5.0, 12.0], [0.0, 0.5, 1.0]))
-      raw_roll_comp = float(np.sin(getattr(self, 'last_roll', 0.0)) * 9.81) * fade
+      fade = float(np.interp(speed, [0.5, 2.5], [0.0, 1.0]))
+      raw_roll_comp = float(getattr(self, 'last_roll', 0.0) * 9.81) * fade
       safe_roll = getattr(self, 'filtered_roll', None)
       if safe_roll is None:
         safe_roll = getattr(self, 'last_roll', 0.0)
@@ -200,17 +202,26 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
   def pid_error_context(self, error):
     scale = 0.72 if self.profile == 'ioniq_5_n' else 1.0
     if self.profile == 'ioniq_5_n':
+      from openpilot.starpilot.lateral.torque_shaping import INTERP_SPEEDS, KP_INTERP, LOW_SPEED_X, LOW_SPEED_Y, MIN_SPEED
       meas = getattr(self, 'last_measurement', 0.0)
       sp = getattr(self, 'last_setpoint', 0.0)
-      if abs(meas) > 0.35 and error * meas < 0.0 and abs(meas) > abs(sp) + 0.12:
-        from openpilot.starpilot.lateral.torque_shaping import INTERP_SPEEDS, KP_INTERP, LOW_SPEED_X, LOW_SPEED_Y
-        spd = getattr(self, 'last_speed', 15.0)
-        lsf = float(np.interp(spd, LOW_SPEED_X, LOW_SPEED_Y)) ** 2
-        kp = max(float(np.interp(spd, INTERP_SPEEDS, KP_INTERP)), 0.1)
-        lsf_ratio = lsf / kp
-        unwind_weight = min((abs(meas) - abs(sp)) / 0.9, 1.0)
+      sa = getattr(self, 'steering_angle_deg', 0.0)
+      spd = max(float(getattr(self, 'last_speed', 15.0)), MIN_SPEED)
+      lsf = (float(np.interp(spd, LOW_SPEED_X, LOW_SPEED_Y)) / spd) ** 2
+      kp = max(float(np.interp(spd, INTERP_SPEEDS, KP_INTERP)), 0.1)
+      # In openpilot, sa > 0 is Left (meas < 0) and sa < 0 is Right (meas > 0)
+      effective_meas = meas if abs(meas) >= 0.25 else (-sa * 0.015)
+      is_unwinding = (abs(meas) > 0.30 or abs(sa) > 20.0) and error * effective_meas < 0.0 and abs( meas ) >= abs(sp)
+      if is_unwinding:
+        lsf_ratio = (kp + lsf) / 1.8
+        gap = max(abs(meas) - abs(sp), abs(sa) * 0.012)
+        unwind_weight = min(gap / 0.75, 1.0)
         attenuated = (1.0 + 0.18 * lsf_ratio) / (1.0 + lsf_ratio)
         scale *= 1.0 - unwind_weight * (1.0 - attenuated)
+      elif spd < 4.5:
+        # Prevent 394x low-speed KP+LSF saturation during crawl-speed (<10 mph) intersection turns
+        crawl_scale = float(np.interp(spd, [1.0, 2.5, 4.5], [0.42, 0.62, 1.0]))
+        scale *= crawl_scale
     return error * scale * (1.0 - shaping.KIA_CARNIVAL_HEV_CENTER_ERROR_REDUCTION * self.hev_center_weight)
 
   def jerk_deadzone(self, setpoint, jerk, measurement, speed):
@@ -259,10 +270,12 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
         * shaping.get_kia_carnival_center_taper_scale(setpoint, speed)
         * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
       )
-      if abs(measurement) > 0.40 and abs(measurement) > abs(setpoint) + 0.15 and scaled * measurement < 0.0:
+      sa = getattr(self, 'steering_angle_deg', 0.0)
+      eff_meas = measurement if abs(measurement) >= 0.25 else (-sa * 0.015)
+      if (abs(measurement) > 0.35 or abs(sa) > 22.0) and abs(measurement) >= abs(setpoint) and scaled * eff_meas < 0.0:
         sr = getattr(self, 'steering_rate_deg', 0.0)
-        max_rev = float(np.interp(sr, [60.0, 175.0, 300.0], [0.18, 0.0, -0.18]))
-        if measurement > 0.0:
+        max_rev = float(np.interp(sr, [130.0, 230.0, 320.0], [0.50, 0.16, 0.05]))
+        if eff_meas > 0.0:
           scaled = max(float(scaled), -max_rev)
         else:
           scaled = min(float(scaled), max_rev)
