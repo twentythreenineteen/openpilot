@@ -204,8 +204,8 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
 
   cp = interfaces[CAR.HYUNDAI_IONIQ_5_N].get_non_essential_params(CAR.HYUNDAI_IONIQ_5_N)
   assert cp.steerRatio == pytest.approx(12.4)
-  assert cp.lateralTuning.torque.latAccelFactor == pytest.approx(2.0)
-  assert cp.lateralTuning.torque.friction == pytest.approx(0.09)
+  assert cp.lateralTuning.torque.latAccelFactor == pytest.approx(3.25)
+  assert cp.lateralTuning.torque.friction == pytest.approx(0.078)
 
   low_limits = CarControllerParams(cp, vEgoRaw=10.0)
   high_limits = CarControllerParams(cp, vEgoRaw=20.0)
@@ -216,28 +216,37 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
   controller = LatControlTorque(cp.as_reader(), interfaces[CAR.HYUNDAI_IONIQ_5_N](cp), 0.01, controller_mode=ControllerMode.STARPILOT)
   policy = controller.starpilot_extension.policy
   assert policy.profile == 'ioniq_5_n'
-  assert controller.pid._k_i == ([0], [0.15])
-  assert controller.pid._k_d[1] == [0.10, 0.09, 0.06]
+  assert controller.pid._k_i == ([0], [0.12])
+  assert controller.pid._k_d[1] == [0.12, 0.10, 0.07]
 
   vm = VehicleModel(cp)
   params = log.VehicleParameters.new_message(angleOffsetDeg=0.0, roll=0.0)
-  cs = SimpleNamespace(vEgo=10.0, steeringAngleDeg=0.0, steeringPressed=False)
+  cs = SimpleNamespace(vEgo=10.0, steeringAngleDeg=0.0, steeringRateDeg=0.0, steeringPressed=False)
   controller.update(True, cs, vm, params, False, 0.0, False, 0.2)
   cs.steeringAngleDeg = -4.0
   _, _, moving = controller.update(True, cs, vm, params, False, 0.0, False, 0.2)
   assert moving.d < 0.0
 
-  assert policy.feedforward_context(0.8, 1.5, -0.8, 1.9, 12.0) == pytest.approx(0.94)
-  assert policy.feedforward_context(0.8, 0.4, -0.8, 0.9, 12.0) < 0.94
-  assert policy.feedforward_context(0.8, 0.5, 0.7, 0.3, 12.0) < 0.94
-  assert policy.feedforward_context(0.8, 1.5, 0.7, 1.3, 12.0) == pytest.approx(0.94)
+  assert policy.feedforward_context(0.8, 1.5, -0.8, 1.9, 12.0) == pytest.approx(0.8)
+  assert policy.feedforward_context(0.8, 0.4, -0.8, 0.9, 12.0) < 0.8
+  assert policy.feedforward_context(0.8, 0.5, 0.7, 0.3, 12.0) < 0.8
+  assert policy.feedforward_context(0.8, 1.5, 0.7, 1.3, 12.0) == pytest.approx(0.8)
   assert policy.jerk_deadzone(0.4, 0.6, 0.2, 10.0) > 0.10
   assert policy.jerk_deadzone(0.7, -0.3, 0.8, 25.0) >= 0.50
-  assert policy.steer_ratio_scale(22.0) == pytest.approx(0.91)
+  policy.last_vm_sR = 14.94
+  assert policy.steer_ratio_scale(22.0) == pytest.approx(12.6 / 14.94)
   policy.prev_output = 0.0
   first_out = policy.output_context(0.6, 0.5, 0.7, 0.3, 10.0)
   policy.prev_output = 0.0
   second_out = policy.output_context(0.6, 0.5, 0.1, 0.3, 10.0)
   assert first_out < second_out
   policy.hev_center_weight = 0.0
+  policy.last_measurement = 0.0
+  policy.last_setpoint = 0.0
   assert policy.pid_error_context(1.0) == pytest.approx(0.72)
+  policy.last_speed = 3.5
+  policy.last_measurement = -2.4
+  policy.last_setpoint = -0.2
+  assert abs(policy.pid_error_context(2.2)) < 0.72 * 2.2 * 0.35
+  policy.steering_rate_deg = 220.0
+  assert policy.output_context(1.0, -0.1, 2.0, -2.2, 3.5) < 0.0
