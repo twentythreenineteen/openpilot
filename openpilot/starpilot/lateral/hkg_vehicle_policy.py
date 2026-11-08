@@ -79,17 +79,36 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       from openpilot.common.pid import PIDController
       from openpilot.starpilot.lateral.gv70_shaping import GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP
       from openpilot.starpilot.lateral.torque_shaping import INTERP_SPEEDS, KP_INTERP
+      self.base_kd_bp = list(GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP)
+      self.base_kd_v = [0.10, 0.09, 0.06]
+      self.prev_output = 0.0
       parent.pid = PIDController([INTERP_SPEEDS, KP_INTERP], 0.15,
-                                 [GENESIS_GV70_MEASUREMENT_DAMPING_SPEED_BP, [0.10, 0.09, 0.06]],
+                                 [self.base_kd_bp, list(self.base_kd_v)],
                                  rate=1 / self.dt)
       parent.update_limits()
 
   supported_cp = staticmethod(lambda cp: policy_for(cp) is not None)
 
+  def steer_ratio_scale(self, speed):
+    if self.profile == 'ioniq_5_n':
+      return float(np.interp(max(speed, 0.0), [8.0, 22.0], [1.0, 0.91]))
+    return 1.0
+
   def update(self, active, cs, vm, params, safety_limited, curvature, curvature_limited, delay):
     self.requested_curvature = curvature
     self.future_lateral_accel = curvature * cs.vEgo ** 2
     self.steering_pressed = bool(cs.steeringPressed)
+    if self.profile == 'ioniq_5_n':
+      if not active:
+        self.prev_output = 0.0
+      else:
+        kd_scale = 1.0
+        if self.previous_setpoint * self.future_lateral_accel >= 0.0 and abs(self.future_lateral_accel) < abs(self.previous_setpoint) - 0.15:
+          unwind_drop = min((abs(self.previous_setpoint) - abs(self.future_lateral_accel)) / 0.85, 1.0)
+          kd_scale = 1.0 - 0.80 * unwind_drop
+        self.parent.pid._k_d = [self.base_kd_bp, [v * kd_scale for v in self.base_kd_v]]
+        if not cs.steeringPressed and abs(self.future_lateral_accel) > 0.65 and self.parent.pid.i * self.future_lateral_accel > 0.0:
+          self.parent.pid.i *= 0.992
     return super().update(active, cs, vm, params, safety_limited, curvature, curvature_limited, delay)
 
   def feedforward_context(self, value, setpoint, jerk, measurement, speed):
@@ -110,11 +129,12 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
     if self.profile == 'kia_carnival':
       return value * shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)
     if self.profile == 'ioniq_5_n':
+      value += 0.14 * float(np.interp(speed, [0.0, 5.0, 12.0], [0.0, 0.5, 1.0]))
       if setpoint * jerk > 0.0 and abs(setpoint) < 1.4:
         turn_in_weight = min(abs(jerk) / 0.8, 1.0) * (1.0 - abs(setpoint) / 1.4)
         return value * (1.0 - 0.18 * turn_in_weight)
-      if abs(setpoint) < 1.0:
-        return value * (1.0 - 0.5 * (1.0 - shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)))
+      if abs(setpoint) < 0.65 and setpoint * jerk < -0.18 and abs(measurement) - abs(setpoint) > 0.18:
+        return value * (1.0 - 0.45 * (1.0 - shaping.get_kia_carnival_unwind_ff_scale(setpoint, measurement, jerk, speed)))
       return value
     return value
 
@@ -163,6 +183,9 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       return shaping.get_kia_carnival_friction_jerk_deadzone(speed, setpoint, jerk)
     if self.profile == 'ioniq_5_n':
       base_dz = shaping.get_kia_carnival_friction_jerk_deadzone(speed, setpoint, jerk)
+      if abs(setpoint) >= 0.35 and setpoint * measurement > 0.0:
+        curve_dz = float(np.interp(abs(setpoint), [0.35, 0.70, 1.80, 2.60], [0.22, 0.52, 0.42, 0.18]))
+        base_dz = max(base_dz, curve_dz)
       if setpoint * jerk > 0.0 and abs(setpoint) < 0.85:
         return max(base_dz, 0.25 * (1.0 - abs(setpoint) / 0.85))
       return base_dz
@@ -193,12 +216,18 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       turn_in_scale = 1.0
       if setpoint * jerk > 0.0 and abs(setpoint) < 1.25 and abs(jerk) > 0.25:
         turn_in_scale = 1.0 - 0.10 * min((abs(jerk) - 0.25) / 0.65, 1.0) * (1.0 - abs(setpoint) / 1.25)
-      return (
+      scaled = (
         value
         * turn_in_scale
         * shaping.get_kia_carnival_center_taper_scale(setpoint, speed)
         * shaping.get_kia_carnival_highway_transition_output_scale(setpoint, jerk, speed)
       )
+      if not self.steering_pressed and not self.previous_pressed and abs(setpoint) >= 0.35 and setpoint * measurement > 0.0:
+        rc = 0.05 if setpoint * jerk < -0.35 else 0.11
+        alpha = self.dt / (rc + self.dt)
+        scaled = self.prev_output + alpha * (scaled - self.prev_output)
+      self.prev_output = float(scaled)
+      return float(scaled)
     if self.profile == 'tucson_4th_gen':
       return value * shaping.get_tucson_4th_gen_center_taper_scale(setpoint, speed)
     if self.profile == 'kona_non_scc':

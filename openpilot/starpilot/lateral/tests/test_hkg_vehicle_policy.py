@@ -227,11 +227,17 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
   _, _, moving = controller.update(True, cs, vm, params, False, 0.0, False, 0.2)
   assert moving.d < 0.0
 
-  assert policy.feedforward_context(0.8, 1.5, -0.8, 1.9, 12.0) == pytest.approx(0.8)
-  assert policy.feedforward_context(0.8, 0.4, -0.8, 0.9, 12.0) < 0.8
-  assert policy.feedforward_context(0.8, 0.5, 0.7, 0.3, 12.0) < 0.8
-  assert policy.feedforward_context(0.8, 1.5, 0.7, 1.3, 12.0) == pytest.approx(0.8)
+  assert policy.feedforward_context(0.8, 1.5, -0.8, 1.9, 12.0) == pytest.approx(0.94)
+  assert policy.feedforward_context(0.8, 0.4, -0.8, 0.9, 12.0) < 0.94
+  assert policy.feedforward_context(0.8, 0.5, 0.7, 0.3, 12.0) < 0.94
+  assert policy.feedforward_context(0.8, 1.5, 0.7, 1.3, 12.0) == pytest.approx(0.94)
   assert policy.jerk_deadzone(0.4, 0.6, 0.2, 10.0) > 0.10
-  assert policy.output_context(0.6, 0.5, 0.7, 0.3, 10.0) < policy.output_context(0.6, 0.5, 0.1, 0.3, 10.0)
+  assert policy.jerk_deadzone(0.7, -0.3, 0.8, 25.0) >= 0.50
+  assert policy.steer_ratio_scale(22.0) == pytest.approx(0.91)
+  policy.prev_output = 0.0
+  first_out = policy.output_context(0.6, 0.5, 0.7, 0.3, 10.0)
+  policy.prev_output = 0.0
+  second_out = policy.output_context(0.6, 0.5, 0.1, 0.3, 10.0)
+  assert first_out < second_out
   policy.hev_center_weight = 0.0
   assert policy.pid_error_context(1.0) == pytest.approx(0.72)
