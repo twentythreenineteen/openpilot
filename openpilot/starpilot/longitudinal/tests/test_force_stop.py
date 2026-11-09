@@ -254,6 +254,15 @@ class ForceStopTests(unittest.TestCase):
     self.assertEqual(vehicle_tune('TOYOTA_CAMRY_TSS2').distance_bias_m, 6.)
     self.assertEqual(vehicle_tune('HYUNDAI_ELANTRA_2021').lead_veto_m, 90.)
     self.assertEqual(vehicle_tune('HYUNDAI_ELANTRA_2021').jerk_scale, .8)
+    ioniq5n = vehicle_tune('HYUNDAI_IONIQ_5_N')
+    self.assertEqual(ioniq5n.handoff_m, 2.0)
+    self.assertEqual(ioniq5n.distance_bias_m, 4.0)
+    self.assertEqual(ioniq5n.sign_seed_m, 50.0)
+    self.owner.reset()
+    for tick in range(6):
+      plan = self.owner.step(frame(tick, speed_mps=8., horizon_m=44., light=False, sign=True), ioniq5n)
+    self.assertTrue(plan.forcing)
+    self.assertAlmostEqual(plan.tracked_distance_m, 44.)
     santa_fe = vehicle_tune('HYUNDAI_SANTA_FE_2022')
     for tick in range(15):
       self.owner.step(frame(tick), santa_fe)

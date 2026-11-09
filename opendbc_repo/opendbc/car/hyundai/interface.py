@@ -312,7 +312,7 @@ class CarInterface(CarInterfaceBase):
         not ret.openpilotLongitudinalControl):
       ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CARNIVAL_ALT_RESUME.value
     ret.pcmCruise = not ret.openpilotLongitudinalControl
-    ret.longitudinalActuatorDelay = 0.5
+    ret.longitudinalActuatorDelay = 0.35 if candidate == CAR.HYUNDAI_IONIQ_5_N else 0.5
     if candidate in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9):
       if candidate == CAR.HYUNDAI_IONIQ_5_PE:
         ret.longitudinalActuatorDelay = 0.35

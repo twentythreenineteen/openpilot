@@ -22,6 +22,9 @@ class StopTune:
   jerk_scale: float = 0.32
   reanchor_speed_tolerance: float | None = None
   low_speed_hold_mps: float | None = None
+  sign_seed_m: float = SIGN_SEED_M
+  model_decel: float = MODEL_APPROACH_DECEL
+  sign_decel: float = SIGN_APPROACH_DECEL
 
 
 def vehicle_tune(fingerprint: str) -> StopTune:
@@ -31,6 +34,9 @@ def vehicle_tune(fingerprint: str) -> StopTune:
     return StopTune(lead_veto_m=90.0, jerk_scale=0.8)
   if fingerprint == 'HYUNDAI_SANTA_FE_2022':
     return StopTune(reanchor_speed_tolerance=0.25, low_speed_hold_mps=2.5)
+  if fingerprint == 'HYUNDAI_IONIQ_5_N':
+    return StopTune(handoff_m=2.0, distance_bias_m=4.0, sign_seed_m=SIGN_MODEL_AGREE_M,
+                    model_decel=1.2, sign_decel=1.2)
   return StopTune()
 
 
@@ -227,11 +233,13 @@ class ForceStop:
         self.distance = min(self.distance, self.distance_cap + 15 * min(self.distance_cap / 60, 1))
         if frame.sign and available:
           if horizon < SIGN_MODEL_AGREE_M:
-            self.distance = min(self.distance, SIGN_SEED_M)
-          if horizon < SIGN_SEED_M:
+            self.distance = min(self.distance, tune.sign_seed_m)
+          if horizon < tune.sign_seed_m:
             self.distance = horizon
+          if tune.sign_seed_m > SIGN_SEED_M:
+            self.distance_cap = max(self.distance_cap, self.distance)
         effective = self.distance + offset + tune.distance_bias_m
-        decel = SIGN_APPROACH_DECEL if frame.sign else MODEL_APPROACH_DECEL
+        decel = tune.sign_decel if frame.sign else tune.model_decel
         ceiling = math.sqrt(2 * decel * max(0, effective - tune.handoff_m))
     else:
       self.forcing = False
@@ -243,7 +251,7 @@ class ForceStop:
         approach = horizon
         effective = approach + offset + tune.distance_bias_m
         if effective > tune.handoff_m:
-          ceiling = math.sqrt(2 * MODEL_APPROACH_DECEL * (effective - tune.handoff_m))
+          ceiling = math.sqrt(2 * tune.model_decel * (effective - tune.handoff_m))
     self.previously_enabled = frame.enabled
     stop_length = self.distance if self.forcing and self.distance > tune.handoff_m else approach
     # The MPC obstacle includes its standing-distance term; adding it at the
