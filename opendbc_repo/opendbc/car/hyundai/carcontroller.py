@@ -9,6 +9,7 @@ from opendbc.car.hyundai.ev9_longitudinal import (
   qualified as ev9_long_qualified,
   update_blindspot_warning,
   BlindspotWarningOutput,
+  BlindspotWarningState,
 )
 from opendbc.car.hyundai import ev9_long_sender
 from opendbc.car.hyundai.ev9_long_aol import qualified as ev9_long_aol_qualified
@@ -137,6 +138,9 @@ class CarController(CarControllerBase):
     self.ccnc_baselined = False
     self.ioniq6_longitudinal = (Ioniq6LongitudinalPolicy()
                                 if CP.carFingerprint == CAR.HYUNDAI_IONIQ_6 and CP.openpilotLongitudinalControl else None)
+    self.ccnc_torque_long = CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and CP.openpilotLongitudinalControl
+    self.ccnc_left_warning = BlindspotWarningState() if self.ccnc_torque_long else None
+    self.ccnc_right_warning = BlindspotWarningState() if self.ccnc_torque_long else None
     self.pe_longitudinal = PELongitudinalPolicy() if pe_long_qualified(CP) else None
     self.pe_startup = None
     self.ev9_longitudinal = EV9LongitudinalPolicy() if ev9_long_qualified(CP) else None
@@ -541,7 +545,7 @@ class CarController(CarControllerBase):
                                                         self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG_ALT))
 
     # LFA and HDA icons
-    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not ev9_long:
+    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long) and not ev9_long and not self.ccnc_torque_long:
       if ccnc_non_lka:
         # Re-emit one paired camera display sample at most once. Missing or
         # held optional frames must not be replaced by a zero-filled payload.
@@ -583,6 +587,25 @@ class CarController(CarControllerBase):
           left_warning_lamp=left_warning.mirror_lamp_active, right_warning_lamp=right_warning.mirror_lamp_active,
           left_sound_active=left_warning.sound_active, right_sound_active=right_warning.sound_active))
         can_sends.append(long_sender.create_radar_heartbeat(self.frame, CS.out.brakePressed, CS.out.gasPressed))
+      elif self.ccnc_torque_long:
+        drive_gear = CS.out.gearShifter == structs.CarState.GearShifter.drive
+        left_bsm = getattr(CS, "left_blindspot_from_radar", False)
+        right_bsm = getattr(CS, "right_blindspot_from_radar", False)
+        left_escalated = left_bsm and CC.leftBlinker and not CC.rightBlinker
+        right_escalated = right_bsm and CC.rightBlinker and not CC.leftBlinker
+        left_warning, right_warning = BlindspotWarningOutput(), BlindspotWarningOutput()
+        if self.frame % 5 == 0:
+          left_warning = update_blindspot_warning(self.ccnc_left_warning, left_escalated, CC.leftBlinker)
+          right_warning = update_blindspot_warning(self.ccnc_right_warning, right_escalated, CC.rightBlinker)
+        can_sends.extend(ioniq5pe_long_sender.create_ccnc_adrv_messages(
+          self.packer, self.CP, self.CAN, self.frame, CC.enabled, CS.out.cruiseState.available, hud_control, CS.out,
+          getattr(CS, "is_metric", False), CC.latActive or CC.enabled, bool(apply_steer_req),
+          left_bsm, right_bsm, drive_gear=drive_gear, hba_icon=getattr(CS, "hba_icon", 0),
+          left_escalated=left_escalated, right_escalated=right_escalated,
+          left_warning_lamp=left_warning.mirror_lamp_active, right_warning_lamp=right_warning.mirror_lamp_active,
+          left_sound_active=left_warning.sound_active, right_sound_active=right_warning.sound_active))
+        can_sends.append(ioniq5pe_long_sender.create_radar_heartbeat(
+          self.frame, getattr(CS.out, "brakePressed", False), getattr(CS.out, "gasPressed", False)))
       elif lka_steering:
         can_sends.extend(hyundaicanfd.create_adrv_messages(
           self.packer, self.CAN, self.frame, template=self.adrv_template,

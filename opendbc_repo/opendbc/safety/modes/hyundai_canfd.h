@@ -976,16 +976,37 @@ static bool hyundai_canfd_tx_hook_valid(const CANPacket_t *msg) {
     if (msg->addr == 0x200U) expected = adr_200;
     if (msg->addr == 0x345U) expected = adr_345;
     if (msg->addr == 0x1DAU) expected = adr_1da;
+    bool body_ok = true;
     if (expected != NULL) {
       for (uint8_t i = 3U; i < GET_LEN(msg); i++) {
-        tx &= msg->data[i] == expected[i - 3U];
+        body_ok &= msg->data[i] == expected[i - 3U];
       }
     } else {
       // 0x160 byte 3 is a source warning counter; all other bytes are fixed.
       for (uint8_t i = 4U; i < GET_LEN(msg); i++) {
-        tx &= msg->data[i] == adr_160[i - 4U];
+        body_ok &= msg->data[i] == adr_160[i - 4U];
       }
     }
+    if (!body_ok && hyundai_canfd_lka_steer_msg_alt && (msg->addr != 0x51U)) {
+      const uint8_t ccnc_160[13] = {0, 0, 0, 0, 0, 0xff, 0xfc, 1, 0, 0xa8, 0, 0x10, 0};
+      const uint8_t ccnc_1ea[29] = {[0] = 0x08, [12] = 0xff, [26] = 0x0f, [27] = 0x0f};
+      const uint8_t ccnc_200[5] = {0x14, 0x40, 0x29, 0, 0};
+      const uint8_t ccnc_345[5] = {0x15, 0, 0x56, 0, 0};
+      const uint8_t ccnc_1da[29] = {[0] = 0x22, [2] = 0x31};
+      const uint8_t *ccnc_expected = NULL;
+      if (msg->addr == 0x160U) ccnc_expected = ccnc_160;
+      if (msg->addr == 0x1EAU) ccnc_expected = ccnc_1ea;
+      if (msg->addr == 0x200U) ccnc_expected = ccnc_200;
+      if (msg->addr == 0x345U) ccnc_expected = ccnc_345;
+      if (msg->addr == 0x1DAU) ccnc_expected = ccnc_1da;
+      if (ccnc_expected != NULL) {
+        body_ok = true;
+        for (uint8_t i = 3U; i < GET_LEN(msg); i++) {
+          body_ok &= msg->data[i] == ccnc_expected[i - 3U];
+        }
+      }
+    }
+    tx &= body_ok;
     uint16_t crc_xor = (GET_LEN(msg) == 8U) ? 0x5F29U : ((GET_LEN(msg) == 16U) ? 0x041DU : 0U);
     tx &= hyundai_canfd_get_checksum(msg) == (hyundai_common_canfd_compute_checksum(msg) ^ crc_xor);
   }
@@ -1002,14 +1023,22 @@ static bool hyundai_canfd_tx_hook_valid(const CANPacket_t *msg) {
       0, 0, 0, 2, 0, 0, 0xfc, 0xff, 0, 0, 0, 0, 0, 0x20, 0, 0,
       0x55, 0xff, 0, 0, 0x68, 0, 0, 0,
     };
+    static const uint8_t ccnc_body[24] = {
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0x1f, 0xff, 0xff,
+      0x55, 0xff, 0xff, 0, 0xa8, 0, 0, 0,
+    };
     bool valid = hyundai_canfd_ioniq6_rx_healthy() &&
                  (hyundai_canfd_get_checksum(msg) == hyundai_common_canfd_compute_checksum(msg)) &&
                  ((!hyundai_canfd_ioniq6_heartbeat_seen) || (msg->data[2] != hyundai_canfd_ioniq6_heartbeat_counter)) &&
                  (GET_BIT(msg, 32U) == brake_pressed) && (GET_BIT(msg, 176U) == gas_pressed);
+    bool i6_body_ok = true;
+    bool ccnc_body_ok = hyundai_canfd_lka_steer_msg_alt;
     for (int i = 3; i < 24; i++) {
       const uint8_t mask = ((i == 4) || (i == 22)) ? 0xfeU : 0xffU;
-      valid &= (msg->data[i] & mask) == body[i];
+      i6_body_ok &= (msg->data[i] & mask) == body[i];
+      ccnc_body_ok &= (msg->data[i] & mask) == ccnc_body[i];
     }
+    valid &= i6_body_ok || ccnc_body_ok;
     if (valid) {
       hyundai_canfd_ioniq6_heartbeat_seen = true;
       hyundai_canfd_ioniq6_heartbeat_counter = msg->data[2];
@@ -1044,7 +1073,12 @@ static bool hyundai_canfd_tx_hook_valid(const CANPacket_t *msg) {
       // Only the complete frozen neutral indication may replace a detection.
       neutral_body &= msg->data[i] == ((i == 7) ? 0x80U : 0U);
     }
-    valid &= physical_body || neutral_body;
+    const bool ccnc_bsm_body = hyundai_canfd_lka_steer_msg_alt &&
+                               (hyundai_canfd_get_checksum(msg) == hyundai_common_canfd_compute_checksum(msg)) &&
+                               ((!hyundai_canfd_ioniq6_bsm_counter_seen) || (msg->data[2] != hyundai_canfd_ioniq6_bsm_counter)) &&
+                               ((msg->data[7] & 0x88U) == 0x88U) && ((msg->data[8] & 0xfeU) == 0x02U) &&
+                               (msg->data[17] == 0x01U) && (msg->data[23] == 0x0fU);
+    valid = (valid && (physical_body || neutral_body)) || ccnc_bsm_body;
     if (valid) {
       hyundai_canfd_ioniq6_bsm_counter_seen = true;
       hyundai_canfd_ioniq6_bsm_counter = msg->data[2];
@@ -1057,16 +1091,19 @@ static bool hyundai_canfd_tx_hook_valid(const CANPacket_t *msg) {
   if (hyundai_canfd_ioniq6_long && (msg->addr == 0x1e5U)) {
     const uint32_t now = microsecond_timer_get();
     static const uint8_t body[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
-    bool valid = hyundai_canfd_ioniq6_bsm_pair_pending &&
-                 hyundai_canfd_ioniq6_bsm_sources_healthy(now) &&
-                 (safety_get_ts_elapsed(now, hyundai_canfd_ioniq6_bsm_pair_ts) <= 10000U) &&
-                 (msg->data[2] == hyundai_canfd_ioniq6_bsm_pair_counter) &&
-                 hyundai_canfd_get_checksum(msg) == (hyundai_common_canfd_compute_checksum(msg) ^ 0x041DU);
+    static const uint8_t ccnc_body[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x22, 0x02, 0, 0, 0, 0x80};
+    const bool pair_and_crc = hyundai_canfd_ioniq6_bsm_pair_pending &&
+                              (safety_get_ts_elapsed(now, hyundai_canfd_ioniq6_bsm_pair_ts) <= 10000U) &&
+                              (msg->data[2] == hyundai_canfd_ioniq6_bsm_pair_counter) &&
+                              hyundai_canfd_get_checksum(msg) == (hyundai_common_canfd_compute_checksum(msg) ^ 0x041DU);
+    bool i6_front_ok = pair_and_crc && hyundai_canfd_ioniq6_bsm_sources_healthy(now);
+    bool ccnc_front_ok = pair_and_crc && hyundai_canfd_lka_steer_msg_alt;
     hyundai_canfd_ioniq6_bsm_pair_pending = false;
     for (int i = 3; i < 16; i++) {
-      valid &= msg->data[i] == body[i];
+      i6_front_ok &= msg->data[i] == body[i];
+      ccnc_front_ok &= msg->data[i] == ccnc_body[i];
     }
-    tx &= valid;
+    tx &= i6_front_ok || ccnc_front_ok;
   }
 
   if (msg->addr == 0xCBU) {

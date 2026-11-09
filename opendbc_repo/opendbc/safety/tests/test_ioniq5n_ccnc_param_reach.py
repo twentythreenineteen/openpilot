@@ -278,3 +278,71 @@ def test_dead_words_are_rejected_by_the_runtime_admission_gate():
   for w in (N_679_WORD, N_BIT10, N_NAIVE):
     assert native_profile_supported(SAFETY_HYUNDAI_CANFD, w) is False, \
       f"0x{w:04X} should be refused by native_profile_supported"
+
+
+def test_n_controller_emits_ccnc_long_frames_and_passes_safety_tx_hook():
+  """110-frame end-to-end check that HYUNDAI_IONIQ_5_N CarController emits the
+  ccNC ADRV replacement set and A-CAN 0x100 heartbeat and passes safety_tx_hook.
+  """
+  from opendbc.can import CANPacker
+  from opendbc.car import Bus, structs
+  from opendbc.car.hyundai.carcontroller import CarController
+  from opendbc.car.hyundai.hyundaicanfd import CanBus
+  from opendbc.car.hyundai.values import DBC
+
+  n_cp = _candidate(CAR.HYUNDAI_IONIQ_5_N)
+  n_cp.safetyConfigs[-1].safetyParam = N_FIXED
+  ci = CarInterface(n_cp)
+  controller = CarController(DBC[n_cp.carFingerprint], n_cp)
+  packer = CANPacker(DBC[n_cp.carFingerprint][Bus.pt])
+  bus = CanBus(n_cp)
+  safety = libsafety_py.libsafety
+  safety.set_alternative_experience(AOL_ALT_EXP)
+  assert safety.set_safety_hooks(SAFETY_HYUNDAI_CANFD, N_FIXED) == 0
+  safety.init_tests()
+
+  seen_addrs = set()
+  for tick in range(110):
+    safety.set_timer(1_000_000 + tick * 10_000)
+    inputs = [
+      packer.make_can_msg("ACCELERATOR", bus.ECAN, {"GEAR": 5, "COUNTER": tick % 256}),
+      packer.make_can_msg("TCS", bus.ECAN, {"ACCEnable": 0, "ACC_REQ": 1, "COUNTER": tick % 256}),
+      packer.make_can_msg("WHEEL_SPEEDS", bus.ECAN, {"WHL_SpdFLVal": 45, "WHL_SpdFRVal": 45, "WHL_SpdRLVal": 45, "WHL_SpdRRVal": 45, "COUNTER": tick % 256}),
+      packer.make_can_msg("MDPS", bus.ECAN, {"COUNTER": tick % 256}),
+      packer.make_can_msg("STEERING_SENSORS", bus.ECAN, {"COUNTER": tick % 256}),
+      packer.make_can_msg("DOORS_SEATBELTS", bus.ECAN, {"DRIVER_SEATBELT": 1}),
+      packer.make_can_msg("CRUISE_BUTTONS", bus.ECAN, {"CRUISE_BUTTONS": 2 if tick == 0 else 0, "COUNTER": tick % 16}),
+      packer.make_can_msg("BLINKERS", bus.ECAN, {"USE_ALT_LAMP": 1, "LEFT_LAMP_ALT": 0, "RIGHT_LAMP_ALT": 0}),
+      packer.make_can_msg("BLINDSPOTS_FRONT_CORNER_2", bus.ECAN, {"SIDE_DETECT_STATE": 0x10, "COUNTER": tick % 256}),
+      packer.make_can_msg("FR_CMR_01_10ms", bus.ECAN, {"HBA_IndLmpReq": 1}),
+      packer.make_can_msg("CAM_0x362", bus.CAM, {"COUNTER": tick % 256}),
+    ]
+    ci.update([(1_000_000_000 + tick * 10_000_000, inputs)])
+    assert ci.CS.out.canValid
+    assert ci.CS.left_blindspot_from_radar is True
+    assert ci.CS.hba_icon == 1
+    for frame in inputs:
+      if frame[2] == bus.ECAN and frame[0] in (0x35, 0x175, 0xA0, 0xEA, 0x1CF, 0x36A, 0x413):
+        assert safety.safety_rx_hook(libsafety_py.make_CANPacket(frame[0], frame[2], frame[1]))
+    safety.set_controls_allowed(True)
+    safety.set_aol_test_heartbeat(True)
+    safety.aol_set_host_request(3)
+    cc = structs.CarControl()
+    cc.enabled = cc.latActive = cc.longActive = True
+    cc.actuators.torque = 0.01
+    cc.actuators.accel = 0.1
+    _, sent = controller.update(cc.as_reader(), ci.CS, 1_000_000_000 + tick * 10_000_000)
+    for addr, payload, b in sent:
+      seen_addrs.add((addr, b, len(payload)))
+      assert safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, b, payload)), f"TX rejected for {hex(addr)}"
+
+  expected_n_tx = {
+    (0x110, 0, 32), (0x362, 0, 32), (0x100, 0, 24),
+    (0x12A, 1, 16), (0x1A0, 1, 32), (0x730, 1, 8),
+    (0x160, 1, 16), (0x161, 1, 32), (0x162, 1, 32),
+    (0x1BA, 1, 24), (0x1DA, 1, 32), (0x1E0, 1, 16),
+    (0x1E5, 1, 16), (0x1EA, 1, 32), (0x200, 1, 8),
+    (0x345, 1, 8), (0x38C, 1, 32),
+  }
+  assert seen_addrs == expected_n_tx
+

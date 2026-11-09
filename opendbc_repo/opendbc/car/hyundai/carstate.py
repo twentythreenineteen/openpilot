@@ -487,12 +487,13 @@ class CarState(CarStateBase):
           self.left_blindspot_from_radar, self.right_blindspot_from_radar = corner_left, corner_right
         ret.leftBlindspot |= corner_left
         ret.rightBlindspot |= corner_right
-      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_PE:
+      if self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_PE or (
+          self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and self.CP.openpilotLongitudinalControl):
         self.left_blindspot_from_radar = self.right_blindspot_from_radar = False
         front_ts = cp.ts_nanos["BLINDSPOTS_FRONT_CORNER_2"]["CHECKSUM"]
         if ioniq_6_bsm_source_fresh(cp._last_update_nanos, front_ts):
           corner_left, corner_right = decode_ioniq_6_corner_bsm(int(cp.vl["BLINDSPOTS_FRONT_CORNER_2"]["SIDE_DETECT_STATE"]))
-          if self.pe_long:
+          if self.pe_long or (self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and self.CP.openpilotLongitudinalControl):
             self.left_blindspot_from_radar, self.right_blindspot_from_radar = corner_left, corner_right
           ret.leftBlindspot |= corner_left
           ret.rightBlindspot |= corner_right
@@ -517,7 +518,8 @@ class CarState(CarStateBase):
             right_lamp=bool(cp.vl["BLINKERS"][right_blinker_sig]),
           )
 
-    if self.ev9_long and cp.ts_nanos["FR_CMR_01_10ms"]["FR_CMR_Crc1Val"] > 0:
+    if (self.ev9_long or (self.CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and self.CP.openpilotLongitudinalControl)) and (
+        cp.ts_nanos["FR_CMR_01_10ms"]["FR_CMR_Crc1Val"] > 0):
       hba = int(cp.vl["FR_CMR_01_10ms"]["HBA_IndLmpReq"])
       self.hba_icon = hba if hba in (1, 2) else 0
 
@@ -615,7 +617,8 @@ class CarState(CarStateBase):
 
   def get_can_parsers_canfd(self, CP):
     msgs = []
-    if ev9_long_qualified(CP) or pe_long_qualified(CP):
+    if ev9_long_qualified(CP) or pe_long_qualified(CP) or (
+        CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N and CP.openpilotLongitudinalControl):
       msgs.append(("FR_CMR_01_10ms", math.nan))
     cam_msgs: list[tuple[str | int, int | float]] = []
     if CP.carFingerprint in (CAR.HYUNDAI_IONIQ_6, CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9) and CP.deprecated.enableBsm:
@@ -627,6 +630,8 @@ class CarState(CarStateBase):
       # The N disables the ADAS ECU that sources this frame, so a live-alive
       # requirement would invalidate CAN validity the instant the disable lands.
       msgs.append(("ADAS_CMD_50_50ms", math.nan))
+      if CP.openpilotLongitudinalControl:
+        msgs.append(("BLINDSPOTS_FRONT_CORNER_2", math.nan))
     if CP.flags & HyundaiFlags.EV:
       msgs.append(("MANUAL_SPEED_LIMIT_ASSIST", math.nan))
     sign_subscription = ("FR_CMR_02_100ms", math.nan)
