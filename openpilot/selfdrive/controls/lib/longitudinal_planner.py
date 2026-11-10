@@ -25,7 +25,7 @@ from openpilot.starpilot.car.tesla.preap_adaptive import startup_owner as preap_
 from openpilot.starpilot.longitudinal.vehicle_policy import forecast_should_stop, planner_cost_owner, far_follow_owner
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling, select_cruise_ceiling, select_curve_ceiling
 from openpilot.starpilot.longitudinal.profile_runtime import (AppliedProfile, ProfileSmoother, ProfileTuning, SelectedProfileTuning,
-                                                             TRAFFIC_CRUISE_BRAKE_MAGNITUDE)
+                                                             TRAFFIC_CRUISE_BRAKE_MAGNITUDE, ioniq5n_default_acceleration_max, max_accel_for_cp)
 from openpilot.starpilot.longitudinal.slc_coast import braking_lead_relevant
 from openpilot.starpilot.longitudinal.throttle_gate import ModelThrottleGate
 from openpilot.starpilot.longitudinal.ioniq6_start import eligible as ioniq6_long_eligible
@@ -67,17 +67,21 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
                      profile: AppliedProfile | None = None,
                      base_brake_floor: float = A_CRUISE_MIN, selected_acceleration_max: float | None = None, faster_takeoffs: bool = False,
                      *, a_target_prev: float | None = None):
-  max_accel = ACCEL_MAX if e2e else get_max_accel(v_ego)
+  cp_accel_max = max_accel_for_cp(CP)
+  max_accel = cp_accel_max if e2e else get_max_accel(v_ego)
   if selected_acceleration_max is not None and not e2e:
     max_accel = selected_acceleration_max
   if profile is not None:
-    max_accel = min(max_accel, profile.acceleration_max, ACCEL_MAX)
+    max_accel = min(max_accel, profile.acceleration_max, cp_accel_max)
 
   if selected_acceleration_max is not None:
-    max_accel = min(max_accel, selected_acceleration_max, ACCEL_MAX)
+    max_accel = min(max_accel, selected_acceleration_max, cp_accel_max)
 
   if not e2e:
-    a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
+    if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+      a_total_max = 3.5
+    else:
+      a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
     a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
     a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
     max_accel = min(max_accel, a_x_allowed)
@@ -89,8 +93,9 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
   cruise_min = max(ACCEL_MIN, -profile.cruise_brake_magnitude) if profile is not None else max(ACCEL_MIN, base_brake_floor)
   target_accel = np.clip(v_cruise - v_ego, cruise_min, max_accel)
   j_cruise = np.interp(v_ego, A_CRUISE_MAX_BP, J_CRUISE_VALS)
+  j_cruise_up = np.interp(v_ego, A_CRUISE_MAX_BP, [2.8, 2.4, 1.8, 1.4]) if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else j_cruise
   decel_start = a_cruise_prev if a_target_prev is None else min(a_cruise_prev, a_target_prev)
-  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise * dt))
+  target_accel = float(np.clip(target_accel, decel_start - j_cruise * dt, a_cruise_prev + j_cruise_up * dt))
 
   return target_accel
 
@@ -202,7 +207,7 @@ class LongitudinalPlanner:
 
     if reset_state:
       self.v_desired_filter.x = v_ego
-      self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
+      self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, max_accel_for_cp(self.CP))
       self.a_cruise = self.output_a_target
 
     # Prevent divergence, smooth in current v_ego
@@ -249,21 +254,33 @@ class LongitudinalPlanner:
     if weights is not None:
       self.mpc.set_cost_weights(weights.stage, weights.constraints)
     else:
+      default_accel_jerk = None
+      default_speed_jerk = None
+      if self.last_profile is None and accelerating and getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+        personality_raw = sm['selfdriveState'].personality
+        if personality_raw == 0:  # aggressive -> n_mode / sport_plus
+          default_accel_jerk = 0.35
+          default_speed_jerk = 0.35
+        elif personality_raw == 1:  # standard -> sport
+          default_accel_jerk = 0.65
+          default_speed_jerk = 0.65
       self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality,
                            acceleration_jerk=(self.last_profile.acceleration_jerk if accelerating else self.last_profile.deceleration_jerk)
-                           if self.last_profile is not None else None,
+                           if self.last_profile is not None else default_accel_jerk,
                            speed_jerk=(self.last_profile.speed_jerk if accelerating else self.last_profile.speed_decrease_jerk)
-                           if self.last_profile is not None else None,
+                           if self.last_profile is not None else default_speed_jerk,
                            danger_jerk=self.last_profile.danger_jerk if self.last_profile is not None else None,
                            stop_jerk_scale=self.force_stop_plan.jerk_scale, acceleration_change_scale=follow_scale)
     selected_acceleration = selected_profiles.acceleration_max if profile_eligible and selected_profiles is not None else None
+    if selected_acceleration is None and profile_eligible:
+      selected_acceleration = ioniq5n_default_acceleration_max(self.CP, sm['selfdriveState'].personality, v_ego, traffic_mode=traffic_mode)
     acceleration_cap = self.last_profile.acceleration_max if self.last_profile is not None else None
     if selected_acceleration is not None:
       acceleration_cap = selected_acceleration
     preap_acceleration_cap = None
     if self.preap_adaptive is not None:
       preap_acceleration_cap = self.preap_adaptive.sample(
-        sm, now_ns=sample_now_ns, drive_id=drive_id, upper=ACCEL_MAX if acceleration_cap is None else acceleration_cap,
+        sm, now_ns=sample_now_ns, drive_id=drive_id, upper=max_accel_for_cp(self.CP) if acceleration_cap is None else acceleration_cap,
         follow_seconds=selected_follow, active=profile_eligible and not reset_state)
       if preap_acceleration_cap is not None:
         acceleration_cap = preap_acceleration_cap
@@ -406,6 +423,15 @@ class LongitudinalPlanner:
                    curve.effective_mps is not None or traffic_mode is not False))
     manual_model = self.accel_boost.update(sm, output_a_target_e2e, output_a_target_mpc, self.a_cruise)
     output_a_target_e2e = max(manual_model, encouraged_model)
+    if (getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' and sm['selfdriveState'].experimentalMode and
+        not reset_state and not self.fcw and self.allow_throttle and
+        not self.force_stop_plan.forcing and not self.force_stop_plan.should_stop and
+        self.force_stop_plan.speed_ceiling_mps is None and
+        not output_should_stop_e2e and not output_should_stop_mpc and not cruise_should_stop and
+        output_a_target_e2e > -0.15 and curve.effective_mps is None and self.mpc.solution_status == 0 and
+        (not sm['radarState'].leadOne.present or
+         (sm['radarState'].leadOne.vLead >= v_ego - 0.5 and sm['radarState'].leadOne.aLeadK >= -0.3 and output_a_target_mpc > 0.2))):
+      output_a_target_e2e = max(output_a_target_e2e, min(output_a_target_mpc, self.a_cruise))
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]
@@ -437,14 +463,15 @@ class LongitudinalPlanner:
       force_stop=self.force_stop_plan.forcing, traffic_mode=traffic_mode, accel_min=ACCEL_MIN)
     if faster_lead_takeoff:
       # Dom takeoff bypasses the standstill cruise slew, never its final bounds.
-      takeoff_max = ACCEL_MAX if sm['selfdriveState'].experimentalMode else get_max_accel(v_ego)
+      takeoff_max = max_accel_for_cp(self.CP) if sm['selfdriveState'].experimentalMode else get_max_accel(v_ego)
       if selected_acceleration is not None and not sm['selfdriveState'].experimentalMode:
         takeoff_max = selected_acceleration
       if cruise_profile is not None:
         takeoff_max = min(takeoff_max, cruise_profile.acceleration_max)
       if selected_acceleration is not None:
         takeoff_max = min(takeoff_max, selected_acceleration)
-      a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
+      a_total_max = 3.5 if getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else (
+        np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V))
       a_y = v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
       takeoff_max = min(takeoff_max, math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.)), max(0., v_cruise - v_ego))
       takeoff_frame = project_takeoff(
@@ -473,7 +500,7 @@ class LongitudinalPlanner:
       output_a_target, self.output_should_stop = self.ford_stop_approach.sample(
         sm, now_ns=sample_now_ns, drive_id=drive_id, target=float(output_a_target),
         stopping=self.output_should_stop, accel_min=ACCEL_MIN, active=profile_eligible and not reset_state)
-    self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+    self.output_a_target = np.clip(output_a_target, ACCEL_MIN, max_accel_for_cp(self.CP))
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

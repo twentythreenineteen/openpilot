@@ -1,7 +1,7 @@
 """Frozen named acceleration curves used by versioned longitudinal profiles."""
 from __future__ import annotations
 
-ACCELERATION_PROFILES = {"STANDARD": 0, "ECO": 1, "SPORT": 2, "SPORT_PLUS": 3}
+ACCELERATION_PROFILES = {"STANDARD": 0, "ECO": 1, "SPORT": 2, "SPORT_PLUS": 3, "N_MODE": 3}
 DECELERATION_PROFILES = {"STANDARD": 0, "ECO": 1, "SPORT": 2}
 A_CRUISE_MAX_BP_CUSTOM = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 40.0]
 CUSTOM_ACCEL_PROFILE_MIN_POINTS = 2

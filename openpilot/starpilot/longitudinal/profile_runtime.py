@@ -8,7 +8,10 @@ from dataclasses import astuple, dataclass
 from openpilot.common.constants import CV
 from opendbc.car.structs import car
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
-from openpilot.starpilot.longitudinal.accel_profile import A_CRUISE_MAX_VALS_TRAFFIC_ALL, interpolate_accel_profile
+from openpilot.starpilot.longitudinal.accel_profile import (
+  A_CRUISE_MAX_VALS_SPORT_EV, A_CRUISE_MAX_VALS_SPORT_PLUS_EV, A_CRUISE_MAX_VALS_STANDARD_EV,
+  A_CRUISE_MAX_VALS_TRAFFIC_ALL, interpolate_accel_profile,
+)
 from openpilot.starpilot.longitudinal.profile_document import (
   DEFAULT_DECELERATION_PROFILE, active_personality_id, interpolate_category_curve, is_truck_fingerprint,
 )
@@ -22,6 +25,31 @@ JERK_MAX = 2.0
 LEGACY_FOLLOW_BP = (45.0 * CV.MPH_TO_MS, 70.0 * CV.MPH_TO_MS)
 TRAFFIC_BP = (0.0, 25.0)  # m/s, not mph.
 TRAFFIC_CRUISE_BRAKE_MAGNITUDE = 1.2 * 0.35  # Magnitude of A_CRUISE_MIN * 0.35.
+IONIQ5N_ACCEL_MAX = 3.5
+IONIQ5N_DEFAULT_ACCEL_PRESETS = {
+  'relaxed': 'standard',
+  'standard': 'sport',
+  'aggressive': 'sport_plus',
+}
+IONIQ5N_DEFAULT_ACCEL_CURVES = {
+  'relaxed': A_CRUISE_MAX_VALS_STANDARD_EV,
+  'standard': A_CRUISE_MAX_VALS_SPORT_EV,
+  'aggressive': A_CRUISE_MAX_VALS_SPORT_PLUS_EV,
+}
+
+
+def max_accel_for_cp(CP) -> float:
+  return IONIQ5N_ACCEL_MAX if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else ACCEL_MAX
+
+
+def ioniq5n_default_acceleration_max(CP, personality, v_ego: float, *, traffic_mode: bool | None = False) -> float | None:
+  if getattr(CP, 'carFingerprint', None) != 'HYUNDAI_IONIQ_5_N' or traffic_mode is not False or not math.isfinite(v_ego) or v_ego < 0:
+    return None
+  identity = active_personality_id(False, personality)
+  curve = IONIQ5N_DEFAULT_ACCEL_CURVES.get(identity)
+  if curve is None:
+    return None
+  return min(max(interpolate_accel_profile(v_ego, curve), 0.0), IONIQ5N_ACCEL_MAX)
 
 
 @dataclass(frozen=True)
@@ -99,7 +127,7 @@ class ProfileSmoother:
                all(JERK_MIN <= value <= JERK_MAX for value in values[1:]) and
                (target.acceleration_max is None or
                 (type(target.acceleration_max) in (int, float) and math.isfinite(target.acceleration_max) and
-                 0.0 <= target.acceleration_max <= ACCEL_MAX)) and
+                 0.0 <= target.acceleration_max <= IONIQ5N_ACCEL_MAX)) and
                (target.cruise_brake_magnitude is None or
                 (type(target.cruise_brake_magnitude) in (int, float) and math.isfinite(target.cruise_brake_magnitude) and
                  (0.35 if traffic_mode else 0.5) <= target.cruise_brake_magnitude <= abs(ACCEL_MIN))))
@@ -118,7 +146,7 @@ class ProfileSmoother:
       desired = default
     else:
       desired = AppliedProfile(target.follow_seconds,
-                               min(target.acceleration_max if target.acceleration_max is not None else ACCEL_MAX, ACCEL_MAX),
+                               min(target.acceleration_max if target.acceleration_max is not None else ACCEL_MAX, IONIQ5N_ACCEL_MAX),
                                min(target.cruise_brake_magnitude if target.cruise_brake_magnitude is not None else 1.2,
                                    abs(ACCEL_MIN)),
                                target.acceleration_jerk, target.deceleration_jerk,
@@ -238,9 +266,10 @@ def resolve(settings: ProfileSettings | TrafficSettings | None, personality, v_e
   cruise_brake_magnitude = None
   custom_acceleration = False
   document = settings.document
+  cp_accel_max = max_accel_for_cp(CP)
   if document is not None and document['enabled'] and settings.profile_enabled[personality_id]:
     categories = document['profiles'][personality_id]
-    ev_tuning = CP.transmissionType == car.CarParams.TransmissionType.direct
+    ev_tuning = CP.transmissionType == car.CarParams.TransmissionType.direct or getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N'
     truck_tuning = is_truck_fingerprint(str(CP.carFingerprint)) and not ev_tuning
     for category in ('following', 'acceleration', 'braking'):
       config = categories[category]
@@ -253,9 +282,11 @@ def resolve(settings: ProfileSettings | TrafficSettings | None, personality, v_e
         follow = value
       elif category == 'acceleration':
         custom_acceleration = config['preset'] == 'custom'
-        acceleration_max = min(max(value, 0.0), ACCEL_MAX)
+        acceleration_max = min(max(value, 0.0), cp_accel_max)
       else:
         cruise_brake_magnitude = min(max(value, 0.5), abs(ACCEL_MIN))
+  if acceleration_max is None:
+    acceleration_max = ioniq5n_default_acceleration_max(CP, personality, v_ego, traffic_mode=traffic_mode)
   acceleration_jerk, deceleration_jerk, speed_jerk, speed_decrease_jerk, danger_jerk = settings.jerk[personality_id]
   return ProfileTuning(personality_id, min(max(follow, FOLLOW_MIN_SECONDS), FOLLOW_MAX_SECONDS),
                        acceleration_jerk, deceleration_jerk, speed_jerk, speed_decrease_jerk, danger_jerk,
@@ -319,8 +350,9 @@ def resolve_selected_profiles(document: dict | None, personality, v_ego: float, 
   identity = active_personality_id(traffic_mode, personality)
   if document is None or identity is None or not math.isfinite(v_ego) or v_ego < 0:
     return None
-  ev = CP.transmissionType == car.CarParams.TransmissionType.direct
+  ev = CP.transmissionType == car.CarParams.TransmissionType.direct or getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N'
   truck = is_truck_fingerprint(str(CP.carFingerprint)) and not ev
+  cp_accel_max = max_accel_for_cp(CP)
   acceleration = braking = None
   style = 'standard'
   for category in ('acceleration', 'braking'):
@@ -336,7 +368,10 @@ def resolve_selected_profiles(document: dict | None, personality, v_ego: float, 
     if inherited:
       preset = document['selectedAccelerationProfile' if category == 'acceleration' else 'selectedDecelerationProfile']
     if preset == 'dom_default':
-      if category == 'acceleration' and inherited and traffic_mode is False and global_powertrain is not None:
+      if category == 'acceleration' and traffic_mode is False and getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+        preset = IONIQ5N_DEFAULT_ACCEL_PRESETS.get(identity, 'standard')
+        inherited = True
+      elif category == 'acceleration' and inherited and traffic_mode is False and global_powertrain is not None:
         preset = 'standard'  # Original explicit EV/Truck choice owns the global Standard fallback.
       else:
         continue
@@ -351,7 +386,7 @@ def resolve_selected_profiles(document: dict | None, personality, v_ego: float, 
     if not math.isfinite(value):
       return None
     if category == 'acceleration':
-      acceleration = min(max(value, 0.0), ACCEL_MAX)
+      acceleration = min(max(value, 0.0), cp_accel_max)
     else:
       braking = min(max(value, 0.35 if traffic_mode else 0.5), abs(ACCEL_MIN))
       style = preset if preset in ('eco', 'sport') else 'standard'

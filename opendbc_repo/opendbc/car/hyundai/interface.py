@@ -116,7 +116,7 @@ class CarInterface(CarInterfaceBase):
     from opendbc.car.hyundai.ev9_longitudinal import qualified as ev9_long_qualified
     if ev9_long_qualified(CP):
       return -3.5, 2.2
-    if is_blended_alpha(CP):
+    if is_blended_alpha(CP) or CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N:
       return -3.5, 3.5
     return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed)
 

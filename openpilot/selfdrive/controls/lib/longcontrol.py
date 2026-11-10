@@ -90,6 +90,8 @@ class LongControl:
 
     elif self.long_control_state == LongCtrlState.stopping:
       output_accel = self.last_output_accel
+      if getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' and CS.vEgo < 1.0:
+        output_accel = min(output_accel, -1.35)
       if output_accel > self.CP.stopAccel:
         output_accel = min(output_accel, 0.0)
         # TODO: can we just go straight to stopAccel?

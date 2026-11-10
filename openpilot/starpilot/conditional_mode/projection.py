@@ -325,11 +325,11 @@ class SceneProjector:
     self.last_slower_stamp_s = None
     return ProjectedScene(SceneEvidence(), None, frozenset(), None, LeadObservation(None, None, None, None), None, None, None, None, None, False)
 
-  def _adjacent_wire(self, sm, *, now_mono_ns: int, now_boot_ns: int, model, car) -> bool | None:
+  def _adjacent_wire(self, sm, *, now_mono_ns: int, now_boot_ns: int, model, car, cp=None) -> bool | None:
     """Consume only the new qualified envelope, never historical leadLeft/right."""
     try:
       if model is None or car is None or not sm.seen['starpilotRadarState'] or not sm.alive['starpilotRadarState']:
-        return None
+        return False if model is not None and car is not None and _field(cp, 'carFingerprint') == 'HYUNDAI_IONIQ_5_N' else None
       envelope = sm['starpilotRadarState'].qualifiedAdjacent
       session = str(envelope.producerSessionId)
       sequence = int(envelope.sequence)
@@ -727,7 +727,7 @@ class SceneProjector:
     )
     chill_observation = self.chill_detector.step(chill_frame)
     adjacent_ambiguous = self._adjacent_wire(sm, now_mono_ns=now_mono_ns, now_boot_ns=now_boot_ns,
-                                             model=model, car=car if car_valid else None)
+                                             model=model, car=car if car_valid else None, cp=cp)
     if not repeated_model:
       self.last_model_stamp_ns = model_stamp
       self.last_stop_stamp_s = stop_stamp

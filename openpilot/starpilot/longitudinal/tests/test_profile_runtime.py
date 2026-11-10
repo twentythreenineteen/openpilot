@@ -16,7 +16,7 @@ from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling
 from openpilot.starpilot.speed_limits.acceptance import Authority, LongitudinalOwner, Mode
 from openpilot.starpilot.longitudinal.profile_document import default_personality_profiles, profile_document as current_profile_document
 from openpilot.starpilot.longitudinal.profile_runtime import (ProfileHost, ProfileSmoother, ProfileTuning,
-                                                             read_settings, read_traffic_settings, resolve)
+                                                             read_settings, read_traffic_settings, resolve, resolve_selected_profiles)
 from openpilot.starpilot.longitudinal.tests.test_cruise_ceiling import V_EGO, messages, snapshot
 from opendbc.car.honda.interface import CarInterface
 from opendbc.car.honda.values import CAR
@@ -672,6 +672,45 @@ class ProfileRuntimeTests(unittest.TestCase):
         self.assertEqual(str(tuned.mpc.source), '1' if case == 'lead' else '4')
         if case == 'e2e':
           self.assertLessEqual(tuned.output_a_target, -2.0)
+
+  def test_ioniq5n_option_b_profiles_and_e2e_uncapping(self):
+    from opendbc.car.hyundai.interface import CarInterface as HyundaiCarInterface
+    from opendbc.car.hyundai.values import CAR as HyundaiCAR
+    ioniq5n_cp = HyundaiCarInterface.get_non_essential_params(HyundaiCAR.HYUNDAI_IONIQ_5_N)
+    ioniq5n_cp.openpilotLongitudinalControl = True
+    ioniq5n_cp.pcmCruise = False
+    document = current_profile_document(default_personality_profiles(False), enabled=True)
+    relaxed = resolve_selected_profiles(document, log.LongitudinalPersonality.relaxed, 0.0, ioniq5n_cp)
+    standard = resolve_selected_profiles(document, log.LongitudinalPersonality.standard, 0.0, ioniq5n_cp)
+    aggressive = resolve_selected_profiles(document, log.LongitudinalPersonality.aggressive, 0.0, ioniq5n_cp)
+    assert relaxed is not None and standard is not None and aggressive is not None
+    self.assertAlmostEqual(required_float(relaxed.acceleration_max), 2.00)
+    self.assertAlmostEqual(required_float(standard.acceleration_max), 2.50)
+    self.assertAlmostEqual(required_float(aggressive.acceleration_max), 3.50)
+
+    # Clear-road on-ramp in experimentalMode (CCM exp=1) must not starve acceleration when model is neutral.
+    planner = LongitudinalPlanner(ioniq5n_cp, init_v=13.4)
+    for _ in range(40):
+      sm, _ = messages()
+      sm['carState'].vEgo = 13.4
+      sm['carState'].vCruise = 128.0
+      sm['carControl'].longActive = True
+      sm['selfdriveState'].experimentalMode = True
+      sm['selfdriveState'].personality = log.LongitudinalPersonality.aggressive
+      sm['modelV2'].action.desiredAcceleration = 0.05
+      sm['modelV2'].action.shouldStop = False
+      planner.update(sm, selected_profiles=resolve_selected_profiles(
+        document, log.LongitudinalPersonality.aggressive, 13.4, ioniq5n_cp))
+    self.assertGreater(planner.output_a_target, 2.0)
+
+    # Real E2E braking (e.g. stop sign / red light) must remain completely intact on IONIQ 5 N.
+    braking_planner = LongitudinalPlanner(ioniq5n_cp, init_v=V_EGO)
+    for _ in range(32):
+      sm, _ = messages(e2e=True)
+      sm['carControl'].longActive = True
+      sm['selfdriveState'].personality = log.LongitudinalPersonality.aggressive
+      braking_planner.update(sm, selected_profiles=aggressive)
+    self.assertLessEqual(braking_planner.output_a_target, -2.0)
 
 
 if __name__ == '__main__':
