@@ -18,7 +18,7 @@ class CarControllerParams:
   ANGLE_LIMITS = AngleSteeringLimitsVM(360, MAX_ANGLE_RATE=5)
 
   def __init__(self, CP, vEgoRaw=100.):
-    self.ACCEL_MAX = 3.5 if is_blended_alpha(CP) or CP.carFingerprint == CAR.HYUNDAI_IONIQ_5_N else type(self).ACCEL_MAX
+    self.ACCEL_MAX = 3.5 if is_blended_alpha(CP) else type(self).ACCEL_MAX
     self.STEER_DELTA_UP = 3
     self.STEER_DELTA_DOWN = 7
     self.STEER_DRIVER_ALLOWANCE = 50

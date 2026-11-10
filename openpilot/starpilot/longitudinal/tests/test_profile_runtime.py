@@ -680,15 +680,19 @@ class ProfileRuntimeTests(unittest.TestCase):
     ioniq5n_cp.openpilotLongitudinalControl = True
     ioniq5n_cp.pcmCruise = False
     document = current_profile_document(default_personality_profiles(False), enabled=True)
-    relaxed = resolve_selected_profiles(document, log.LongitudinalPersonality.relaxed, 0.0, ioniq5n_cp)
-    standard = resolve_selected_profiles(document, log.LongitudinalPersonality.standard, 0.0, ioniq5n_cp)
-    aggressive = resolve_selected_profiles(document, log.LongitudinalPersonality.aggressive, 0.0, ioniq5n_cp)
+    relaxed = resolve_selected_profiles(document, log.LongitudinalPersonality.relaxed, 15.0, ioniq5n_cp)
+    standard = resolve_selected_profiles(document, log.LongitudinalPersonality.standard, 15.0, ioniq5n_cp)
+    aggressive = resolve_selected_profiles(document, log.LongitudinalPersonality.aggressive, 15.0, ioniq5n_cp)
     assert relaxed is not None and standard is not None and aggressive is not None
-    self.assertAlmostEqual(required_float(relaxed.acceleration_max), 2.00)
-    self.assertAlmostEqual(required_float(standard.acceleration_max), 2.50)
-    self.assertAlmostEqual(required_float(aggressive.acceleration_max), 3.50)
+    self.assertAlmostEqual(required_float(relaxed.acceleration_max), 1.44)
+    self.assertAlmostEqual(required_float(standard.acceleration_max), 1.78)
+    self.assertAlmostEqual(required_float(aggressive.acceleration_max), 2.00)
+    # Never exceed Panda HYUNDAI_LONG_LIMITS.max_accel = 2.00 m/s^2 at any speed.
+    low_speed_agg = resolve_selected_profiles(document, log.LongitudinalPersonality.aggressive, 0.0, ioniq5n_cp)
+    assert low_speed_agg is not None
+    self.assertLessEqual(required_float(low_speed_agg.acceleration_max), 2.00)
 
-    # Clear-road on-ramp in experimentalMode (CCM exp=1) must not starve acceleration when model is neutral.
+    # Clear-road straight on-ramp in experimentalMode (CCM exp=1) must not starve acceleration when model is neutral.
     planner = LongitudinalPlanner(ioniq5n_cp, init_v=13.4)
     for _ in range(40):
       sm, _ = messages()
@@ -701,7 +705,24 @@ class ProfileRuntimeTests(unittest.TestCase):
       sm['modelV2'].action.shouldStop = False
       planner.update(sm, selected_profiles=resolve_selected_profiles(
         document, log.LongitudinalPersonality.aggressive, 13.4, ioniq5n_cp))
-    self.assertGreater(planner.output_a_target, 2.0)
+    self.assertGreater(planner.output_a_target, 1.65)
+    self.assertLessEqual(planner.output_a_target, 2.00)
+
+    # Tight ramp curve with high lateral acceleration must NOT uncap acceleration in experimentalMode.
+    curve_planner = LongitudinalPlanner(ioniq5n_cp, init_v=20.0)
+    for _ in range(40):
+      sm, _ = messages()
+      sm['carState'].vEgo = 20.0
+      sm['carState'].vCruise = 128.0
+      sm['carState'].steeringAngleDeg = 25.0
+      sm['carControl'].longActive = True
+      sm['selfdriveState'].experimentalMode = True
+      sm['selfdriveState'].personality = log.LongitudinalPersonality.aggressive
+      sm['modelV2'].action.desiredAcceleration = 0.05
+      sm['modelV2'].action.shouldStop = False
+      curve_planner.update(sm, selected_profiles=resolve_selected_profiles(
+        document, log.LongitudinalPersonality.aggressive, 20.0, ioniq5n_cp))
+    self.assertLessEqual(curve_planner.output_a_target, 0.20)
 
     # Real E2E braking (e.g. stop sign / red light) must remain completely intact on IONIQ 5 N.
     braking_planner = LongitudinalPlanner(ioniq5n_cp, init_v=V_EGO)

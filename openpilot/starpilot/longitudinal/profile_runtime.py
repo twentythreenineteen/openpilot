@@ -25,7 +25,7 @@ JERK_MAX = 2.0
 LEGACY_FOLLOW_BP = (45.0 * CV.MPH_TO_MS, 70.0 * CV.MPH_TO_MS)
 TRAFFIC_BP = (0.0, 25.0)  # m/s, not mph.
 TRAFFIC_CRUISE_BRAKE_MAGNITUDE = 1.2 * 0.35  # Magnitude of A_CRUISE_MIN * 0.35.
-IONIQ5N_ACCEL_MAX = 3.5
+IONIQ5N_ACCEL_MAX = ACCEL_MAX
 IONIQ5N_DEFAULT_ACCEL_PRESETS = {
   'relaxed': 'standard',
   'standard': 'sport',

@@ -78,10 +78,7 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
     max_accel = min(max_accel, selected_acceleration_max, cp_accel_max)
 
   if not e2e:
-    if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
-      a_total_max = 3.5
-    else:
-      a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
+    a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
     a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
     a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
     max_accel = min(max_accel, a_x_allowed)
@@ -413,11 +410,12 @@ class LongitudinalPlanner:
                                      a_target_prev=self.output_a_target)
     cruise_should_stop = should_stop(v_ego, self.a_cruise)
 
+    lateral_accel = (v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
+                     if self.CP.steerRatio > 0 and self.CP.wheelbase > 0 else math.inf)
     encouraged_model = self.encouragement.update(
       sm, self.CP, now_ns=sample_now_ns, drive_id=drive_id, dt=self.dt, target_speed=v_cruise,
       model_accel=output_a_target_e2e, mpc_accel=output_a_target_mpc, cruise_accel=self.a_cruise,
-      lateral_accel=(v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
-                     if self.CP.steerRatio > 0 and self.CP.wheelbase > 0 else math.inf),
+      lateral_accel=lateral_accel,
       blocked=bool(experimental_speed_nudge is not True or reset_state or self.fcw or not self.allow_throttle or self.force_stop_plan.forcing or
                    output_should_stop_mpc or cruise_should_stop or self.mpc.solution_status != 0 or
                    curve.effective_mps is not None or traffic_mode is not False))
@@ -429,9 +427,12 @@ class LongitudinalPlanner:
         self.force_stop_plan.speed_ceiling_mps is None and
         not output_should_stop_e2e and not output_should_stop_mpc and not cruise_should_stop and
         output_a_target_e2e > -0.15 and curve.effective_mps is None and self.mpc.solution_status == 0 and
+        math.isfinite(lateral_accel) and abs(lateral_accel) < 1.5 and
         (not sm['radarState'].leadOne.present or
          (sm['radarState'].leadOne.vLead >= v_ego - 0.5 and sm['radarState'].leadOne.aLeadK >= -0.3 and output_a_target_mpc > 0.2))):
-      output_a_target_e2e = max(output_a_target_e2e, min(output_a_target_mpc, self.a_cruise))
+      a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
+      a_x_allowed = math.sqrt(max(a_total_max ** 2 - lateral_accel ** 2, 0.))
+      output_a_target_e2e = max(output_a_target_e2e, min(output_a_target_mpc, self.a_cruise, a_x_allowed))
 
     candidates = [(output_a_target_mpc, self.mpc.source, output_should_stop_mpc),
                   (self.a_cruise, LongitudinalPlanSource.cruise, cruise_should_stop)]

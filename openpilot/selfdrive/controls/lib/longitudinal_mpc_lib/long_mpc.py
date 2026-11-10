@@ -578,7 +578,7 @@ class LongitudinalMpc:
 
     self.params[:,0] = ACCEL_MIN
     bounded_accel = (acceleration_max is not None and math.isfinite(acceleration_max) and
-                     0.0 <= acceleration_max <= 3.5)
+                     0.0 <= acceleration_max <= ACCEL_MAX)
     self.params[:,1] = acceleration_max if bounded_accel else ACCEL_MAX
     self.params[:,2] = np.min(x_obstacles, axis=1)
     self.params[:,3] = np.copy(self.a_prev)
