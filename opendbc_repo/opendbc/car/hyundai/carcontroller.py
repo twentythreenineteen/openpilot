@@ -235,6 +235,8 @@ class CarController(CarControllerBase):
     # accel + longitudinal
     accel = float(np.clip(actuators.accel, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
     stopping = actuators.longControlState == LongCtrlState.stopping
+    if self.ccnc_torque_long:
+      stopping = stopping and (CS.out.standstill or CS.out.vEgo < 0.45)
     if self.pe_longitudinal is not None:
       request = self.pe_longitudinal.update(self.frame, active=CC.enabled and CC.longActive,
         override=CC.cruiseControl.override, accel=accel, speed=CS.out.vEgo, measured_accel=CS.out.aEgo,

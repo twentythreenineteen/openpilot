@@ -733,6 +733,86 @@ class ProfileRuntimeTests(unittest.TestCase):
       braking_planner.update(sm, selected_profiles=aggressive)
     self.assertLessEqual(braking_planner.output_a_target, -2.0)
 
+  def test_ioniq5n_follow_headway_stopped_gap_and_chauffeur_stop(self):
+    from opendbc.car.structs import car
+    from opendbc.car.hyundai.interface import CarInterface as HyundaiCarInterface
+    from opendbc.car.hyundai.values import CAR as HyundaiCAR
+    from openpilot.selfdrive.controls.lib.longcontrol import LongControl, LongCtrlState
+    from openpilot.starpilot.longitudinal.profile_runtime import IONIQ5N_STOPPED_LEAD_OFFSET_M, ioniq5n_default_follow_seconds
+
+    ioniq5n_cp = HyundaiCarInterface.get_non_essential_params(HyundaiCAR.HYUNDAI_IONIQ_5_N)
+    ioniq5n_cp.openpilotLongitudinalControl = True
+    ioniq5n_cp.pcmCruise = False
+
+    # 1. Tighter moving headways (~3 car lengths in city/suburbia, tapering on highway).
+    self.assertAlmostEqual(required_float(ioniq5n_default_follow_seconds(ioniq5n_cp, log.LongitudinalPersonality.aggressive, 8.0)), 1.00)
+    self.assertAlmostEqual(required_float(ioniq5n_default_follow_seconds(ioniq5n_cp, log.LongitudinalPersonality.aggressive, 29.0)), 0.95)
+    self.assertAlmostEqual(required_float(ioniq5n_default_follow_seconds(ioniq5n_cp, log.LongitudinalPersonality.standard, 8.0)), 1.18)
+    self.assertAlmostEqual(required_float(ioniq5n_default_follow_seconds(ioniq5n_cp, log.LongitudinalPersonality.standard, 29.0)), 1.10)
+    self.assertAlmostEqual(required_float(ioniq5n_default_follow_seconds(ioniq5n_cp, log.LongitudinalPersonality.relaxed, 8.0)), 1.45)
+
+    # 2. +1.85 m stopped-lead offset applies to stopped leads without changing fast moving follow.
+    civic_planner = LongitudinalPlanner(self.cp, init_v=8.0)
+    ioniq_planner = LongitudinalPlanner(ioniq5n_cp, init_v=8.0)
+    for planner in (civic_planner, ioniq_planner):
+      sm, _ = messages(lead=True)
+      sm['carState'].vEgo = 8.0
+      sm['carControl'].longActive = True
+      sm['selfdriveState'].personality = log.LongitudinalPersonality.standard
+      sm['radarState'].leadOne.dRel = 14.0
+      sm['radarState'].leadOne.vRel = -8.0
+      sm['radarState'].leadOne.vLead = 0.0
+      sm['radarState'].leadOne.aLeadK = 0.0
+      planner.update(sm)
+    self.assertAlmostEqual(float(civic_planner.mpc.params[0, 2] - ioniq_planner.mpc.params[0, 2]), IONIQ5N_STOPPED_LEAD_OFFSET_M, places=4)
+    self.assertAlmostEqual(float(ioniq_planner.mpc.params[0, 4]), 1.18, places=4)
+
+    # Moving lead (>= 5.0 m/s) has zero stopped-gap shift on MPC obstacle.
+    for planner in (civic_planner, ioniq_planner):
+      sm, _ = messages(lead=True)
+      sm['carState'].vEgo = 20.0
+      sm['carControl'].longActive = True
+      sm['selfdriveState'].personality = log.LongitudinalPersonality.standard
+      sm['radarState'].leadOne.dRel = 35.0
+      sm['radarState'].leadOne.vRel = 0.0
+      sm['radarState'].leadOne.vLead = 20.0
+      sm['radarState'].leadOne.aLeadK = 0.0
+      planner.update(sm)
+    self.assertAlmostEqual(float(civic_planner.mpc.params[0, 2]), float(ioniq_planner.mpc.params[0, 2]), places=4)
+
+    # 3. Two-phase Chauffeur Stop: feather off while rolling, then ramp firmly to stopAccel on standstill.
+    lc = LongControl(ioniq5n_cp)
+    lc.long_control_state = LongCtrlState.stopping
+    lc.last_output_accel = -0.95
+    cs = car.CarState.new_message()
+    cs.aEgo = -0.7
+    cs.standstill = False
+    for step in range(80):  # 0.8s rolling down from 0.85 m/s -> 0.10 m/s
+      cs.vEgo = max(0.10, 0.85 - step * 0.01)
+      out = lc.update(True, cs, a_target=-0.22, should_stop=True, accel_limits=[-3.5, 2.0])
+    # Must feather UP toward ~-0.22 m/s^2 instead of slamming to -1.35..-2.0 while rolling!
+    self.assertGreater(out, -0.32)
+    self.assertLessEqual(out, -0.18)
+
+    # Once wheels physically stop (CS.standstill == True), smoothly press back on to hold at CP.stopAccel (-2.0).
+    cs.vEgo = 0.0
+    cs.standstill = True
+    first_hold = lc.update(True, cs, a_target=-0.22, should_stop=True, accel_limits=[-3.5, 2.0])
+    self.assertGreater(first_hold, -0.40)  # No instantaneous -2.0 spike on frame 1
+    for _ in range(110):
+      hold = lc.update(True, cs, a_target=-0.22, should_stop=True, accel_limits=[-3.5, 2.0])
+    self.assertAlmostEqual(hold, -2.0, places=3)
+
+    # Urgent stop (a_target < -1.05) bypasses feathering immediately while rolling.
+    lc_urgent = LongControl(ioniq5n_cp)
+    lc_urgent.long_control_state = LongCtrlState.stopping
+    lc_urgent.last_output_accel = -0.50
+    cs_urgent = car.CarState.new_message()
+    cs_urgent.vEgo = 0.60
+    cs_urgent.standstill = False
+    urgent_out = lc_urgent.update(True, cs_urgent, a_target=-1.60, should_stop=True, accel_limits=[-3.5, 2.0])
+    self.assertLessEqual(urgent_out, -1.60)
+
 
 if __name__ == '__main__':
   unittest.main()

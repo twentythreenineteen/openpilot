@@ -26,6 +26,13 @@ LEGACY_FOLLOW_BP = (45.0 * CV.MPH_TO_MS, 70.0 * CV.MPH_TO_MS)
 TRAFFIC_BP = (0.0, 25.0)  # m/s, not mph.
 TRAFFIC_CRUISE_BRAKE_MAGNITUDE = 1.2 * 0.35  # Magnitude of A_CRUISE_MIN * 0.35.
 IONIQ5N_ACCEL_MAX = ACCEL_MAX
+IONIQ5N_STOPPED_LEAD_OFFSET_M = 2.45
+IONIQ5N_DEFAULT_FOLLOW_BP = (8.0, 29.0)
+IONIQ5N_DEFAULT_FOLLOW_CURVES = {
+  'aggressive': (1.00, 0.95),
+  'standard': (1.18, 1.10),
+  'relaxed': (1.45, 1.40),
+}
 IONIQ5N_DEFAULT_ACCEL_PRESETS = {
   'relaxed': 'standard',
   'standard': 'sport',
@@ -42,8 +49,19 @@ def max_accel_for_cp(CP) -> float:
   return IONIQ5N_ACCEL_MAX if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else ACCEL_MAX
 
 
+def ioniq5n_default_follow_seconds(CP, personality, v_ego: float, *, traffic_mode: bool | None = False) -> float | None:
+  if getattr(CP, 'carFingerprint', None) != 'HYUNDAI_IONIQ_5_N' or traffic_mode is True or not math.isfinite(v_ego) or v_ego < 0:
+    return None
+  identity = active_personality_id(False, personality)
+  points = IONIQ5N_DEFAULT_FOLLOW_CURVES.get(identity)
+  if points is None:
+    return None
+  ratio = min(max((v_ego - IONIQ5N_DEFAULT_FOLLOW_BP[0]) / (IONIQ5N_DEFAULT_FOLLOW_BP[1] - IONIQ5N_DEFAULT_FOLLOW_BP[0]), 0.0), 1.0)
+  return float(points[0] + (points[1] - points[0]) * ratio)
+
+
 def ioniq5n_default_acceleration_max(CP, personality, v_ego: float, *, traffic_mode: bool | None = False) -> float | None:
-  if getattr(CP, 'carFingerprint', None) != 'HYUNDAI_IONIQ_5_N' or traffic_mode is not False or not math.isfinite(v_ego) or v_ego < 0:
+  if getattr(CP, 'carFingerprint', None) != 'HYUNDAI_IONIQ_5_N' or traffic_mode is True or not math.isfinite(v_ego) or v_ego < 0:
     return None
   identity = active_personality_id(False, personality)
   curve = IONIQ5N_DEFAULT_ACCEL_CURVES.get(identity)
@@ -368,7 +386,7 @@ def resolve_selected_profiles(document: dict | None, personality, v_ego: float, 
     if inherited:
       preset = document['selectedAccelerationProfile' if category == 'acceleration' else 'selectedDecelerationProfile']
     if preset == 'dom_default':
-      if category == 'acceleration' and traffic_mode is False and getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+      if category == 'acceleration' and traffic_mode is not True and getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
         preset = IONIQ5N_DEFAULT_ACCEL_PRESETS.get(identity, 'standard')
         inherited = True
       elif category == 'acceleration' and inherited and traffic_mode is False and global_powertrain is not None:

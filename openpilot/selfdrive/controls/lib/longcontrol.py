@@ -48,11 +48,14 @@ class LongControl:
                               else (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV)),
                              rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
+    self.low_speed_stop_time = 0.0
     self.takeoff_start = TakeoffStart() if takeoff_eligible(CP) else None
     self.takeoff_starting = False
 
   def reset(self, *, reset_start: bool = True):
     self.pid.reset()
+    if reset_start:
+      self.low_speed_stop_time = 0.0
     if self.extension is not None:
       self.extension.reset(reset_start=reset_start)
 
@@ -84,18 +87,39 @@ class LongControl:
         native_state, previous_state, active, CS, a_target, should_stop, accel_limits,
         context=context)
     self.takeoff_starting = selected and self.long_control_state == LongCtrlState.starting
+    if self.long_control_state != LongCtrlState.stopping:
+      self.low_speed_stop_time = 0.0
     if self.long_control_state == LongCtrlState.off:
       self.reset()
       output_accel = 0.
 
     elif self.long_control_state == LongCtrlState.stopping:
       output_accel = self.last_output_accel
-      if getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' and CS.vEgo < 1.0:
-        output_accel = min(output_accel, -1.35)
-      if output_accel > self.CP.stopAccel:
-        output_accel = min(output_accel, 0.0)
-        # TODO: can we just go straight to stopAccel?
-        output_accel -= self.stopping_decel_rate * DT_CTRL  # m/s^2/s while trying to stop
+      if getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+        if CS.standstill:
+          self.low_speed_stop_time = 0.0
+          output_accel = min(output_accel, -0.25)
+          if output_accel > self.CP.stopAccel:
+            output_accel = max(self.CP.stopAccel, output_accel - 1.8 * DT_CTRL)
+        else:
+          self.low_speed_stop_time = self.low_speed_stop_time + DT_CTRL if CS.vEgo < 0.35 else 0.0
+          if self.low_speed_stop_time > 1.2:
+            output_accel = min(output_accel, -0.25, float(a_target))
+            if output_accel > self.CP.stopAccel:
+              output_accel = max(self.CP.stopAccel, output_accel - 0.8 * DT_CTRL)
+          elif a_target < -1.30:
+            output_accel = min(output_accel, float(a_target))
+          else:
+            feather_cap = float(np.interp(CS.vEgo, [0.0, 0.08, 0.25, 0.60, 1.20, 2.00],
+                                          [-0.18, -0.20, -0.26, -0.42, -0.78, -1.20]))
+            min_crawl_brake = float(np.interp(CS.vEgo, [0.0, 0.40, 1.20], [-0.18, -0.24, -0.45]))
+            desired_stop = min(min_crawl_brake, max(float(a_target), feather_cap))
+            output_accel = float(np.clip(desired_stop, output_accel - 1.2 * DT_CTRL, output_accel + 1.0 * DT_CTRL))
+      else:
+        if output_accel > self.CP.stopAccel:
+          output_accel = min(output_accel, 0.0)
+          # TODO: can we just go straight to stopAccel?
+          output_accel -= self.stopping_decel_rate * DT_CTRL  # m/s^2/s while trying to stop
       if self.extension is not None:
         output_accel = self.extension.stopping_output(output_accel, a_target, should_stop, CS)
       self.reset(reset_start=False)

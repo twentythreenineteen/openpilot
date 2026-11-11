@@ -7,6 +7,7 @@ CLASSIC_STOP_SPEED = float(np.float32(.5))
 CANFD_STOP_SPEED = float(np.float32(.3))
 STOP_SPEED_OVERRIDES = {
   CAR.GENESIS_G90: float(np.float32(.8)),
+  CAR.HYUNDAI_IONIQ_5_N: float(np.float32(.55)),
   CAR.HYUNDAI_PALISADE_2023: float(np.float32(.35)),
   CAR.KIA_NIRO_PHEV_2022: float(np.float32(.7)),
 }

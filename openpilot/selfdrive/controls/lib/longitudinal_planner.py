@@ -24,8 +24,9 @@ from openpilot.starpilot.navigation.intent import cruise_ceiling as navigation_c
 from openpilot.starpilot.car.tesla.preap_adaptive import startup_owner as preap_adaptive_owner
 from openpilot.starpilot.longitudinal.vehicle_policy import forecast_should_stop, planner_cost_owner, far_follow_owner
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling, select_cruise_ceiling, select_curve_ceiling
-from openpilot.starpilot.longitudinal.profile_runtime import (AppliedProfile, ProfileSmoother, ProfileTuning, SelectedProfileTuning,
-                                                             TRAFFIC_CRUISE_BRAKE_MAGNITUDE, ioniq5n_default_acceleration_max, max_accel_for_cp)
+from openpilot.starpilot.longitudinal.profile_runtime import (AppliedProfile, IONIQ5N_STOPPED_LEAD_OFFSET_M, ProfileSmoother, ProfileTuning,
+                                                             SelectedProfileTuning, TRAFFIC_CRUISE_BRAKE_MAGNITUDE,
+                                                             ioniq5n_default_acceleration_max, ioniq5n_default_follow_seconds, max_accel_for_cp)
 from openpilot.starpilot.longitudinal.slc_coast import braking_lead_relevant
 from openpilot.starpilot.longitudinal.throttle_gate import ModelThrottleGate
 from openpilot.starpilot.longitudinal.ioniq6_start import eligible as ioniq6_long_eligible
@@ -217,7 +218,10 @@ class LongitudinalPlanner:
       self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
     else:
       self.mpc.set_cur_state(v_ego, sm['carState'].aEgo)
-    base_follow = self.last_profile.follow_seconds if self.last_profile is not None else get_T_FOLLOW(sm['selfdriveState'].personality)
+    default_follow = (ioniq5n_default_follow_seconds(self.CP, sm['selfdriveState'].personality, v_ego, traffic_mode=traffic_mode)
+                      if profile_eligible and self.last_profile is None else None)
+    base_follow = (self.last_profile.follow_seconds if self.last_profile is not None else
+                   (default_follow if default_follow is not None else get_T_FOLLOW(sm['selfdriveState'].personality)))
     approach_follow = self.lead_approach.step(
       lead_approach_key, project_approach(sm, self.CP, sample_now_ns, lead_approach_key) if lead_approach_key is not None else None,
       base_follow, blocked=reset_state)
@@ -253,20 +257,26 @@ class LongitudinalPlanner:
     else:
       default_accel_jerk = None
       default_speed_jerk = None
-      if self.last_profile is None and accelerating and getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
-        personality_raw = sm['selfdriveState'].personality
-        if personality_raw == 0:  # aggressive -> n_mode / sport_plus
-          default_accel_jerk = 0.35
-          default_speed_jerk = 0.35
-        elif personality_raw == 1:  # standard -> sport
-          default_accel_jerk = 0.65
-          default_speed_jerk = 0.65
+      default_danger_jerk = None
+      if self.last_profile is None and getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+        if accelerating:
+          personality_raw = sm['selfdriveState'].personality
+          if personality_raw == 0:  # aggressive -> n_mode / sport_plus
+            default_accel_jerk = 0.35
+            default_speed_jerk = 0.35
+          elif personality_raw == 1:  # standard -> sport
+            default_accel_jerk = 0.65
+            default_speed_jerk = 0.65
+        else:
+          lead = sm['radarState'].leadOne
+          if lead.present and lead.vLead < 4.5 and lead.dRel < 20.0:
+            default_danger_jerk = 2.0
       self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality,
                            acceleration_jerk=(self.last_profile.acceleration_jerk if accelerating else self.last_profile.deceleration_jerk)
                            if self.last_profile is not None else default_accel_jerk,
                            speed_jerk=(self.last_profile.speed_jerk if accelerating else self.last_profile.speed_decrease_jerk)
                            if self.last_profile is not None else default_speed_jerk,
-                           danger_jerk=self.last_profile.danger_jerk if self.last_profile is not None else None,
+                           danger_jerk=self.last_profile.danger_jerk if self.last_profile is not None else default_danger_jerk,
                            stop_jerk_scale=self.force_stop_plan.jerk_scale, acceleration_change_scale=follow_scale)
     selected_acceleration = selected_profiles.acceleration_max if profile_eligible and selected_profiles is not None else None
     if selected_acceleration is None and profile_eligible:
@@ -281,11 +291,13 @@ class LongitudinalPlanner:
         follow_seconds=selected_follow, active=profile_eligible and not reset_state)
       if preap_acceleration_cap is not None:
         acceleration_cap = preap_acceleration_cap
+    base_stopped_gap_m = IONIQ5N_STOPPED_LEAD_OFFSET_M if profile_eligible and getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else 0.0
+    user_stopped_gap_m = selected_profiles.extra_stopped_gap_m if profile_eligible and selected_profiles is not None else 0.0
     self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality,
                     follow_seconds=follow if follow is not None else
-                    (self.last_profile.follow_seconds if self.last_profile is not None else None),
+                    (self.last_profile.follow_seconds if self.last_profile is not None else default_follow),
                     acceleration_max=acceleration_cap,
-                    extra_stopped_gap_m=(selected_profiles.extra_stopped_gap_m if profile_eligible and selected_profiles is not None else 0.0),
+                    extra_stopped_gap_m=min(base_stopped_gap_m + user_stopped_gap_m, 3.048),
                     stop_line_m=self.force_stop_plan.obstacle_m, modelV2=qualified_model_leads(sm, sample_now_ns, self.model_lead_history))
 
     # MPC has selected the actual follow time for this model cycle. Its solve
@@ -471,8 +483,7 @@ class LongitudinalPlanner:
         takeoff_max = min(takeoff_max, cruise_profile.acceleration_max)
       if selected_acceleration is not None:
         takeoff_max = min(takeoff_max, selected_acceleration)
-      a_total_max = 3.5 if getattr(self.CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else (
-        np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V))
+      a_total_max = np.interp(v_ego, _TAKEOFF_TOTAL_BP, _TAKEOFF_TOTAL_MAX) if faster_takeoffs else np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
       a_y = v_ego ** 2 * steer_angle_without_offset * CV.DEG_TO_RAD / (self.CP.steerRatio * self.CP.wheelbase)
       takeoff_max = min(takeoff_max, math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.)), max(0., v_cruise - v_ego))
       takeoff_frame = project_takeoff(
