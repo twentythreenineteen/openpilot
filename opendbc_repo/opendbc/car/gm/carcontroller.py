@@ -254,8 +254,12 @@ def bolt_acc_pedal_dashboard_sensor_ready(CS, now_nanos):
           0 <= now_nanos - CS.stock_acc_status_ts_nanos <= STOCK_ACC_STATUS_TIMEOUT_NS)
 
 
-def bolt_acc_pedal_dashboard_drive_ready(CS, now_nanos):
-  return (CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.low) and
+def bolt_acc_pedal_dashboard_drive_ready(CS, now_nanos, *, allow_paddle=False):
+  paddle_ns, paddle_gear = getattr(CS, "bolt_acc_dashboard_paddle", (0, False))
+  paddle_display = (allow_paddle and paddle_gear and CS.out.regenBraking and
+                    CS.out.gearShifter == structs.CarState.GearShifter.manumatic and
+                    0 < paddle_ns <= now_nanos <= paddle_ns + PEDAL_SENSOR_TIMEOUT_NS)
+  return ((CS.out.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.low) or paddle_display) and
           CS.bolt_pedal_gear_ts_nanos > 0 and 0 <= now_nanos - CS.bolt_pedal_gear_ts_nanos <= 100_000_000 and
           CS.bolt_pedal_main_ts_nanos > 0 and 0 <= now_nanos - CS.bolt_pedal_main_ts_nanos <= 300_000_000)
 
@@ -360,6 +364,7 @@ class CarController(CarControllerBase):
     self.volt_cc_cancel_pending = False
     self.volt_cc_last_cancel_frame = 0
     self.volt_cc_metric = False
+    self.volt_cc_speed_ceiling_mps = None
     self.volt_cc_last_button_frame = 0
     self.volt_cc_last_direction_frame = None
     self.volt_cc_consumed_source_ns = 0
@@ -929,7 +934,8 @@ class CarController(CarControllerBase):
           self.CP.carFingerprint == CAR.CHEVROLET_BOLT_ACC_2022_2023_PEDAL and
           is_bolt_pedal_profile(self.CP) and len(self.CP.safetyConfigs) == 1 and
           self.CP.safetyConfigs[0].safetyParam == 0x1CD and CS.out.canValid and not CS.out.canTimeout and
-          bolt_acc_pedal_dashboard_sensor_ready(CS, now_nanos) and CS.out.cruiseState.available and bolt_acc_pedal_dashboard_drive_ready(CS, now_nanos)
+          bolt_acc_pedal_dashboard_sensor_ready(CS, now_nanos) and CS.out.cruiseState.available and
+          bolt_acc_pedal_dashboard_drive_ready(CS, now_nanos, allow_paddle=True)
         )
         if dashboard_ready:
           fcw = 3 if hud_alert == VisualAlert.fcw else int(getattr(CS, "stock_fcw_alert", 0)) & 3
@@ -1396,7 +1402,10 @@ class CarController(CarControllerBase):
           self.volt_cc_consumed_source_ns = source_ns
           can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN, (CS.buttons_counter + 1) % 4, button))
       elif self.frame % 4 == 0:
-        button, rate = button_request(CS.out.vEgo, CS.out.cruiseState.speed, actuators.accel, CS.out.vCruise,
+        cruise_kph = CS.out.vCruise
+        if self.volt_cc_speed_ceiling_mps is not None:
+          cruise_kph = min(cruise_kph, self.volt_cc_speed_ceiling_mps * CV.MS_TO_KPH)
+        button, rate = button_request(CS.out.vEgo, CS.out.cruiseState.speed, actuators.accel, cruise_kph,
                                       bool(CC.hudControl.leadVisible), self.volt_cc_metric)
         source_ns = physical.button_credit_ns
         if ((self.frame - self.volt_cc_last_button_frame) * DT_CTRL > rate and

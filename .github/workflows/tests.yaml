@@ -57,6 +57,9 @@ jobs:
     - name: Test CI tools
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: python3 -m unittest discover -s tools/ci/tests -v
+    - name: Test authenticated monitoring release artifacts
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      run: python3 -m pytest -q tools/ci/tests/test_stock_monitoring_release.py
     - name: Test updater
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: python3 -m unittest discover -s openpilot/system/updated/tests -v
@@ -198,6 +201,11 @@ jobs:
       run: |
         uv pip install --python .venv/bin/python --only-binary av av==19.0.1
         .venv/bin/python -c "import av; assert 'libx264' in av.codecs_available"
+    - name: Provide pinned OpenCV DNN for vision contract tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      run: |
+        uv pip install --python .venv/bin/python --no-deps --only-binary :all: opencv-python-headless==4.11.0.86
+        .venv/bin/python -c "import cv2; assert cv2.__version__ == '4.11.0'; assert callable(cv2.dnn.readNetFromONNX); assert callable(cv2.dnn.NMSBoxes)"
     - name: Run unit tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       timeout-minutes: ${{ contains(runner.name, 'nsc') && 2 || 20 }}
@@ -287,11 +295,17 @@ jobs:
       run: |
         uv pip install --python .venv/bin/python --only-binary av av==19.0.1
         .venv/bin/python -c "import av; assert 'libx264' in av.codecs_available"
+    - name: Provide Mesa software graphics for pixel-level tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      run: sudo apt-get update && sudo apt-get install -y libegl1 libgles-dev libgl1-mesa-dri
     - name: Test every assigned custom pytest node serially
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      timeout-minutes: 15
+      timeout-minutes: 20
       env:
         RAYLIB_BACKEND: headless
+        STARPILOT_AUTO_GL_TEST: "1"
+        STARPILOT_TEST_SOFTWARE_EGL: "1"
+        LIBGL_ALWAYS_SOFTWARE: "1"
       run: .venv/bin/python -m tools.ci.custom_pytest_shards run --index "${{ matrix.shard }}" --count 32 --output "ci-results/custom-pytest-${{ matrix.shard }}"
     - name: Save collection, every outcome, JUnit and durable worker diagnostics
       if: always()
@@ -342,7 +356,9 @@ jobs:
     - name: Build native host dependencies
       run: scons
     - name: Gate every assigned lifecycle module serially
-      timeout-minutes: 10
+      timeout-minutes: 15
+      env:
+        RAYLIB_BACKEND: headless
       run: python3 tools/ci/run_vehicle_tests.py --suite aol-lifecycle --shard-index "${{ matrix.shard }}" --shard-count 16 --output "ci-results/aol-lifecycle-${{ matrix.shard }}"
     - name: Save every lifecycle outcome and native build
       if: always()
@@ -443,7 +459,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     env:
       FUZZ_SEED: '0'
     steps:
@@ -453,7 +469,9 @@ jobs:
       run: scons
     - name: Run every assigned RELEASE target serially
       timeout-minutes: 20
-      run: python3 tools/ci/run_vehicle_tests.py --suite safety-release --shard-index "${{ matrix.shard }}" --shard-count 4 --output "ci-results/safety-release-${{ matrix.shard }}"
+      env:
+        RAYLIB_BACKEND: headless
+      run: python3 tools/ci/run_vehicle_tests.py --suite safety-release --shard-index "${{ matrix.shard }}" --shard-count 16 --output "ci-results/safety-release-${{ matrix.shard }}"
     - name: Save every RELEASE outcome and native build
       if: always()
       uses: actions/upload-artifact@v4
@@ -476,7 +494,7 @@ jobs:
         pattern: safety-release-*
         path: ci-results/safety-release-shards
     - name: Require every RELEASE case exactly once and passed
-      run: python3 tools/ci/lifecycle_shards.py ci-results/safety-release-shards --suite safety-release --count 4 --output ci-results/safety-release-complete.json
+      run: python3 tools/ci/lifecycle_shards.py ci-results/safety-release-shards --suite safety-release --count 16 --output ci-results/safety-release-complete.json
     - name: Save complete RELEASE verdict
       if: always()
       uses: actions/upload-artifact@v4

@@ -7,13 +7,16 @@ from dataclasses import astuple, dataclass
 
 from openpilot.common.constants import CV
 from opendbc.car.structs import car
-from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX as DEFAULT_ACCEL_MAX
+from openpilot.starpilot.longitudinal.lead_takeoff_preferences import MAX_ACCEL as ACCEL_MAX
+from openpilot.starpilot.longitudinal import drive_mode as drive_mode_profiles
 from openpilot.starpilot.longitudinal.accel_profile import (
   A_CRUISE_MAX_VALS_SPORT_EV, A_CRUISE_MAX_VALS_SPORT_PLUS_EV, A_CRUISE_MAX_VALS_STANDARD_EV,
   A_CRUISE_MAX_VALS_TRAFFIC_ALL, interpolate_accel_profile,
 )
 from openpilot.starpilot.longitudinal.profile_document import (
-  DEFAULT_DECELERATION_PROFILE, active_personality_id, interpolate_category_curve, is_truck_fingerprint,
+  DEFAULT_DECELERATION_PROFILE, active_personality_id, default_personality_profiles, interpolate_category_curve,
+  is_truck_fingerprint, profile_document,
 )
 from openpilot.starpilot.longitudinal.profile_preferences import (
   FOLLOW_MIN_SECONDS, FOLLOW_MAX_SECONDS, NAMES, SCALARS, TRAFFIC_JERK_SUFFIXES,
@@ -25,7 +28,7 @@ JERK_MAX = 2.0
 LEGACY_FOLLOW_BP = (45.0 * CV.MPH_TO_MS, 70.0 * CV.MPH_TO_MS)
 TRAFFIC_BP = (0.0, 25.0)  # m/s, not mph.
 TRAFFIC_CRUISE_BRAKE_MAGNITUDE = 1.2 * 0.35  # Magnitude of A_CRUISE_MIN * 0.35.
-IONIQ5N_ACCEL_MAX = ACCEL_MAX
+IONIQ5N_ACCEL_MAX = DEFAULT_ACCEL_MAX
 IONIQ5N_STOPPED_LEAD_OFFSET_M = 2.45
 IONIQ5N_DEFAULT_FOLLOW_BP = (8.0, 29.0)
 IONIQ5N_DEFAULT_FOLLOW_CURVES = {
@@ -45,8 +48,10 @@ IONIQ5N_DEFAULT_ACCEL_CURVES = {
 }
 
 
-def max_accel_for_cp(CP) -> float:
-  return IONIQ5N_ACCEL_MAX if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else ACCEL_MAX
+def max_accel_for_cp(CP, *, faster_takeoffs: bool = False) -> float:
+  if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N':
+    return IONIQ5N_ACCEL_MAX
+  return ACCEL_MAX if faster_takeoffs else DEFAULT_ACCEL_MAX
 
 
 def ioniq5n_default_follow_seconds(CP, personality, v_ego: float, *, traffic_mode: bool | None = False) -> float | None:
@@ -145,7 +150,7 @@ class ProfileSmoother:
                all(JERK_MIN <= value <= JERK_MAX for value in values[1:]) and
                (target.acceleration_max is None or
                 (type(target.acceleration_max) in (int, float) and math.isfinite(target.acceleration_max) and
-                 0.0 <= target.acceleration_max <= IONIQ5N_ACCEL_MAX)) and
+                 0.0 <= target.acceleration_max <= ACCEL_MAX)) and
                (target.cruise_brake_magnitude is None or
                 (type(target.cruise_brake_magnitude) in (int, float) and math.isfinite(target.cruise_brake_magnitude) and
                  (0.35 if traffic_mode else 0.5) <= target.cruise_brake_magnitude <= abs(ACCEL_MIN))))
@@ -156,7 +161,7 @@ class ProfileSmoother:
       return None
     default_follow = {'traffic': 0.75, 'aggressive': 1.25, 'standard': 1.45, 'relaxed': 1.75}[personality_id]
     default_jerk = 0.5 if personality_id == 'aggressive' else 1.0
-    default = AppliedProfile(default_follow, ACCEL_MAX, 1.2, default_jerk, default_jerk,
+    default = AppliedProfile(default_follow, DEFAULT_ACCEL_MAX, 1.2, default_jerk, default_jerk,
                              default_jerk, default_jerk, 1.0)
     if target is None and self.applied is None:
       return None
@@ -164,7 +169,7 @@ class ProfileSmoother:
       desired = default
     else:
       desired = AppliedProfile(target.follow_seconds,
-                               min(target.acceleration_max if target.acceleration_max is not None else ACCEL_MAX, IONIQ5N_ACCEL_MAX),
+                               min(target.acceleration_max if target.acceleration_max is not None else DEFAULT_ACCEL_MAX, ACCEL_MAX),
                                min(target.cruise_brake_magnitude if target.cruise_brake_magnitude is not None else 1.2,
                                    abs(ACCEL_MIN)),
                                target.acceleration_jerk, target.deceleration_jerk,
@@ -177,7 +182,7 @@ class ProfileSmoother:
       if ordinary_follow is None:
         return None
       ordinary_jerk = 0.5 if ordinary_id == 'aggressive' else 1.0
-      previous = AppliedProfile(ordinary_follow, ACCEL_MAX, 1.2, ordinary_jerk, ordinary_jerk,
+      previous = AppliedProfile(ordinary_follow, DEFAULT_ACCEL_MAX, 1.2, ordinary_jerk, ordinary_jerk,
                                 ordinary_jerk, ordinary_jerk, 1.0)
     else:
       previous = self.applied or default
@@ -284,7 +289,7 @@ def resolve(settings: ProfileSettings | TrafficSettings | None, personality, v_e
   cruise_brake_magnitude = None
   custom_acceleration = False
   document = settings.document
-  cp_accel_max = max_accel_for_cp(CP)
+  cp_accel_max = IONIQ5N_ACCEL_MAX if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else ACCEL_MAX
   if document is not None and document['enabled'] and settings.profile_enabled[personality_id]:
     categories = document['profiles'][personality_id]
     ev_tuning = CP.transmissionType == car.CarParams.TransmissionType.direct or getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N'
@@ -370,7 +375,7 @@ def resolve_selected_profiles(document: dict | None, personality, v_ego: float, 
     return None
   ev = CP.transmissionType == car.CarParams.TransmissionType.direct or getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N'
   truck = is_truck_fingerprint(str(CP.carFingerprint)) and not ev
-  cp_accel_max = max_accel_for_cp(CP)
+  cp_accel_max = IONIQ5N_ACCEL_MAX if getattr(CP, 'carFingerprint', None) == 'HYUNDAI_IONIQ_5_N' else ACCEL_MAX
   acceleration = braking = None
   style = 'standard'
   for category in ('acceleration', 'braking'):
@@ -421,6 +426,7 @@ class ProfileHost:
     self.disabled = False
     self.selected_document: dict | None = None
     self.selected_powertrain: GlobalPowertrainPreset | None = None
+    self.selected_drive_mode = (False, False)
     self.selected_attempt_ns = -self.REFRESH_NS
     self.selected_success_ns = -1
     self.settings: ProfileSettings | TrafficSettings | None = None
@@ -433,10 +439,11 @@ class ProfileHost:
     self.global_last_success_ns = -1
 
   def sample_selected(self, now_ns: int, personality, v_ego: float, CP, *, traffic_mode: bool | None = False,
-                      legacy: ProfileTuning | None = None) -> SelectedProfileTuning | None:
+                      legacy: ProfileTuning | None = None, drive_mode: str | None = None) -> SelectedProfileTuning | None:
     if now_ns < 0 or now_ns < self.selected_attempt_ns:
       self.selected_document = None
       self.selected_powertrain = None
+      self.selected_drive_mode = (False, False)
       self.selected_attempt_ns = now_ns - self.REFRESH_NS
       self.selected_success_ns = -1
     if now_ns - self.selected_attempt_ns >= self.REFRESH_NS:
@@ -445,14 +452,22 @@ class ProfileHost:
         saved = read_document_value(self.params)
         self.selected_document = saved.value if saved.valid and isinstance(saved.value, dict) else None
         self.selected_powertrain = read_global_powertrain_preset(self.params, CP)
+        self.selected_drive_mode = drive_mode_profiles.read_enabled(self.params)
         self.selected_success_ns = now_ns if saved.valid else -1
       except (OSError, RuntimeError, ValueError, TypeError, KeyError):
         self.selected_document = None
         self.selected_powertrain = None
+        self.selected_drive_mode = (False, False)
         self.selected_success_ns = -1
     if self.selected_success_ns < 0 or now_ns - self.selected_success_ns > self.MAX_AGE_NS:
       return None
-    return resolve_selected_profiles(self.selected_document, personality, v_ego, CP,
+    document = self.selected_document
+    if any(self.selected_drive_mode) and traffic_mode is False and drive_mode in drive_mode_profiles.PROFILES:
+      if document is None:
+        document = profile_document(default_personality_profiles(False), enabled=False)
+      document = drive_mode_profiles.apply(document, drive_mode, acceleration=self.selected_drive_mode[0],
+                                           deceleration=self.selected_drive_mode[1])
+    return resolve_selected_profiles(document, personality, v_ego, CP,
                                      traffic_mode=traffic_mode, legacy=legacy, global_powertrain=self.selected_powertrain)
 
   def sample_global_braking(self, now_ns: int) -> str | None:

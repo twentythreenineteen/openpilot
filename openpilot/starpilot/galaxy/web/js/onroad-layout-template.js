@@ -65,9 +65,9 @@ export const ONROAD_LAYOUT_TEMPLATE = `
                 <button class="gx-icon-btn gx-layout__bar-toggle" type="button" :aria-expanded="state.tipsOpen" aria-controls="gx-layout-tips" aria-label="Preview tips and display behavior" title="Preview tips and display behavior" @click="state.tipsOpen = !state.tipsOpen"><i class="bi bi-question-circle" aria-hidden="true"></i></button>
               </div>
               <p class="gx-note">{{ state.scene === 'general' ? 'Arrange all enabled widgets with sample readings. Use a driving scene to check when they appear.' : 'Eyes follow this driving scene. Choose General edit to arrange widgets hidden here.' }}</p>
-              <p v-if="state.backdrop.status === 'unavailable'" class="gx-note" role="status">{{ nativeBackdropReady ? 'The comma screen could not refresh. Showing the last one.' : 'The comma screen is unavailable. Showing a sketch.' }}</p>
-              <p v-if="state.art.status === 'unavailable'" class="gx-note" role="status">{{ state.art.url ? 'Widget preview could not refresh. Showing the last preview.' : 'Widget preview unavailable. Placement controls remain available.' }}</p>
               <div class="gx-layout__stage">
+              <span v-if="state.backdrop.status === 'unavailable'" class="gx-layout__stage-chip gx-layout__stage-chip--bottom" role="status">{{ nativeBackdropReady ? 'The comma screen could not refresh. Showing the last one.' : 'The comma screen is unavailable. Showing a sketch.' }}</span>
+              <span v-if="state.art.status === 'unavailable'" class="gx-layout__stage-chip gx-layout__stage-chip--bottom" :class="{'gx-layout__stage-chip--second': state.backdrop.status === 'unavailable'}" role="status">{{ state.art.url ? 'Widget preview could not refresh. Showing the last preview.' : 'Widget preview unavailable. Placement controls remain available.' }}</span>
               <span v-if="state.showEditingAids && state.snapGuides.length && !snapInBar" class="gx-layout__stage-chip gx-layout__stage-chip--start" :class="{'gx-layout__stage-chip--with-tap-areas': !projection && state.showFavoriteZones && state.profile !== 'compact'}" aria-hidden="true">{{ snapSummary }}</span>
               <span v-if="!projection && state.showFavoriteZones && state.showEditingAids && state.profile !== 'compact'" class="gx-layout__stage-chip" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i>Tap areas</span>
               <svg ref="preview" class="gx-layout__preview" :style="{'--layout-glow': state.profile === 'compact' ? '4px' : '14px'}" :viewBox="'0 0 ' + profile.width + ' ' + profile.height" :width="profile.width" :height="profile.height"
@@ -168,6 +168,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
                 <p class="gx-note">Drag widgets to place them. Behind them is the comma's own screen for the chosen scene, including its border, road and alerts. Readings are samples.</p>
                 <p class="gx-note">Widgets snap to the screen edges, the center and other widgets. Turn snapping off with the magnet button, or hold Option (Alt) while dragging.</p>
               <p class="gx-note">General edit shows samples of all enabled widgets together. Driving scenes hide widgets that would be absent, and the eyes follow the scene. Eye changes stay with that scene; your General edit eyes are remembered.</p>
+              <p v-if="selectedWidget?.kind === 'weather'" class="gx-note">Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>. Uses your GPS area when enabled; updates in the background about every 10 minutes.</p>
               <p class="gx-note">The stopped timer appears in General edit and Stopped timer. Turn off editing aids to see the screen without outlines and guides.</p>
               <p class="gx-note">The steering wheel and driver monitoring icon can be resized in each layout.{{ profile.widgets.nav_map ? ' The map overlay has adjustable size and opacity.' : '' }} Existing display preferences and driving state still control when widgets appear.</p>
               <p v-if="!projection" class="gx-note">Small speed-limit signs can overlap confirmation actions. Live confirmations hide an overlapping sign until the decision ends. Select either widget in the list to edit it.</p>
@@ -247,6 +248,15 @@ export const ONROAD_LAYOUT_TEMPLATE = `
                 </template>
                 <GalaxySettingRow feedback="draft" v-if="selectedWidget.backgroundToggle" :row="switchRow('Show background', selectedPosition.background === true)" :index="0"
                   :disabled="!editAvailable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setWidgetBackground(value)" />
+                <div v-if="projection && selectedWidget.sizes" class="gx-layout__favorite-display">
+                  <span>Size</span>
+                  <div class="gx-segment" role="group" :aria-label="selectedWidget.label + ' size'">
+                    <button v-for="size in ['big', 'small']" :key="size" class="gx-btn" type="button"
+                      :class="selectedPosition.size === size ? 'gx-btn--primary' : 'gx-btn--tonal'"
+                      :aria-pressed="selectedPosition.size === size" :disabled="!editAvailable || !!state.drag || !!state.layerDrag"
+                      @click="setWidgetSize(size)">{{ size === 'big' ? 'Big' : 'Small' }}</button>
+                  </div>
+                </div>
                 <GalaxySettingRow v-if="selectedWidget.collapseToggle" :row="switchRow('Collapse when paused', selectedPosition.collapse === true)" :index="0"
                   :disabled="!editAvailable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setWidgetCollapse(value)" />
                 <p v-if="selectedWidget.defaultAnchor === 'driver_side'" class="gx-note">The default position follows the driver’s side. A moved position stays where you place it.</p>
@@ -355,8 +365,7 @@ export const ONROAD_LAYOUT_TEMPLATE = `
               <div class="gx-layout__subhead"><h4>StarPort screen options</h4></div>
               <p class="gx-note">Only the StarPort screen uses these. The comma screen has its own options on the Comma tab. Save to apply.</p>
               <h5 class="gx-layout__display-group">Alerts and borders</h5>
-              <GalaxySettingRow feedback="draft" :row="switchRow('Hide Personality Alerts', state.draft.hidePersonalityAlerts === true)" :index="0"
-                :disabled="!editable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setProjectionDisplay('hidePersonalityAlerts', value)" />
+              <p class="gx-note">Personality alerts follow the comma screen setting.</p>
               <GalaxySettingRow feedback="draft" :row="switchRow('Red Blind-Spot Border', state.draft.blindSpotBorder === true)" :index="1"
                 :disabled="!editable || !!state.drag || !!state.layerDrag" :save-value="(index, value) => setProjectionDisplay('blindSpotBorder', value)" />
               <GalaxySettingRow feedback="draft" :row="switchRow('Amber Signal Border', state.draft.signalBorder === true)" :index="2"

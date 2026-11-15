@@ -55,7 +55,7 @@ def test_generic_admission_is_brand_independent_and_stock_is_display_only(tmp_pa
 def test_factory_defaults_and_hidden_vision_control_producer(tmp_path):
   params, cp = Params(str(tmp_path)), toyota()
   settings = slc_runtime_settings(params, cp, {})
-  assert settings.selection.slots[:2] == (Source.VISION, Source.DASHBOARD)
+  assert settings.selection.slots == (Source.VISION, Source.MAP, None)
   assert not settings.enabled and settings.display
   assert enabled(params, cp, 'conditional', {})
   assert enabled(params, cp, 'slc', {}) and enabled(params, cp, 'vision', {})
@@ -74,6 +74,7 @@ def test_toyota_actual_default_plannerd_constructs_requested_hosts(tmp_path):
   sm = Mock()
   sm.update.side_effect = EndLoop
   with (patch.object(plannerd, 'Params', return_value=params),
+        patch('openpilot.common.params.Params', return_value=params),
         patch.object(plannerd, 'config_realtime_process'), patch.object(plannerd, 'set_core_affinity'),
         patch.object(plannerd.messaging, 'sub_sock'),
         patch.object(plannerd.messaging, 'SubMaster', return_value=sm) as subscriber,
@@ -87,7 +88,7 @@ def test_toyota_actual_default_plannerd_constructs_requested_hosts(tmp_path):
     conditional.assert_called_once()
     profiles.assert_called_once()
     assert 'slcState' in publisher.call_args.args[0]
-    assert 'slcCruiseCommand' in publisher.call_args.args[0]
+    assert 'starpilotLongitudinalPlan' in publisher.call_args.args[0]
     for source in ('slcDashboardObservation', 'slcVisionObservation', 'mapdOut'):
       assert source in subscriber.call_args.args[0]
   assert plannerd.SavedSlcLifecycle(params, cp, {}).refresh(NOW)[0] is not None

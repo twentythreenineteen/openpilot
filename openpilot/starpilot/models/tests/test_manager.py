@@ -154,6 +154,103 @@ class ModelManagerTest(unittest.TestCase):
     with self.assertRaises(ModelError):
       self.manager.action('active', {'profile': 'small', 'model': 'gwm8223'})
 
+  def record_progress(self):
+    seen = []
+    publish = self.manager._publish_job
+
+    def spy(**kwargs):
+      if 'detail' in kwargs:
+        seen.append(dict(kwargs['detail']))
+      return publish(**kwargs)
+
+    progress_spy = patch.object(self.manager, '_publish_job', side_effect=spy)
+    progress_spy.start()
+    self.addCleanup(progress_spy.stop)
+    return seen
+
+  def test_progress_reports_phases_bytes_and_position(self):
+    seen = self.record_progress()
+    self.download()
+    phases = [detail['phase'] for detail in seen]
+    self.assertEqual([phase for index, phase in enumerate(phases) if phase not in phases[:index]],
+                     ['catalog', 'downloading', 'verifying', 'installing'])
+    start = next(detail for detail in seen if 'index' in detail)
+    self.assertEqual((start['index'], start['count'], start['total'], start['received']), (1, 1, len(self.data), 0))
+    received = [detail['received'] for detail in seen if detail['phase'] == 'downloading' and 'received' in detail]
+    self.assertEqual(received, sorted(received))
+    self.assertEqual(max(received), len(self.data))
+    self.assertIsNone(self.manager.snapshot()['downloadProgress'])
+    self.assertEqual(self.manager._read_job()['detail'], {})
+
+  def test_progress_reports_running_download_to_other_observers(self):
+    seen = []
+    original = self.manager.opener
+
+    def opener(url, timeout):
+      if url.endswith('chunk02of02'):
+        seen.append(self.manager.snapshot())
+      return original(url, timeout)
+
+    self.manager.opener = opener
+    self.download()
+    running = seen[0]['downloadProgress']
+    self.assertEqual((running['phase'], running['model'], running['index'], running['count']), ('downloading', 'gwm8223', 1, 1))
+    self.assertEqual((running['received'], running['total'], running['error']), (10, len(self.data), ''))
+    self.assertTrue(seen[0]['downloading'])
+
+  def test_queue_reports_position_across_models(self):
+    published = [row for row in self.manifest['models'] if 'artifact_sha256' in row]
+    for row in published:
+      row.update({key: self.row[key] for key in ('artifact_format', 'artifact_sha256', 'artifact_size', 'artifact_chunk_count')})
+    seen = self.record_progress()
+    self.manager.action('download_all', {})
+    worker = self.manager.worker
+    assert worker is not None
+    worker.join(10)
+    self.assertFalse(worker.is_alive())
+    starts = [(detail['index'], detail['count']) for detail in seen if 'index' in detail]
+    count = starts[0][1]
+    self.assertGreater(count, 1)
+    self.assertEqual(starts, [(index, count) for index in range(1, count + 1)])
+    self.assertEqual(self.manager.progress, 'Downloaded!')
+
+  def test_failed_download_says_what_happened_then_expires(self):
+    self.bad = True
+    self.download()
+    shown = self.manager.snapshot()['downloadProgress']
+    self.assertEqual((shown['phase'], shown['model'], shown['received'], shown['total']), ('failed', 'gwm8223', 10 + len(b'corrupt'), len(self.data)))
+    self.assertIn('checksum', shown['error'])
+    self.assertFalse(self.manager.snapshot()['downloading'])
+    with patch('openpilot.starpilot.models.manager.FAILURE_SHOWN_SECONDS', 0):
+      self.assertIsNone(self.manager.snapshot()['downloadProgress'])
+    self.bad = False
+    self.download()
+    self.assertIsNone(self.manager.snapshot()['downloadProgress'])
+
+  def test_cancelled_download_is_not_reported_as_a_failure(self):
+    original = self.manager.opener
+
+    def opener(url, timeout):
+      if url.endswith('chunk01of02'):
+        self.manager.action('cancel', {})
+      return original(url, timeout)
+
+    self.manager.opener = opener
+    self.download()
+    self.assertEqual(self.manager.progress, 'Download cancelled')
+    self.assertIsNone(self.manager.snapshot()['downloadProgress'])
+
+  def test_failed_catalog_check_is_not_reported_as_a_download_failure(self):
+    def offline(url, timeout):
+      raise OSError('offline')
+
+    self.manager.opener = offline
+    self.manager.action('refresh_manifest', {})
+    worker = self.manager.worker
+    assert worker is not None
+    worker.join(3)
+    self.assertIsNone(self.manager.snapshot()['downloadProgress'])
+
   def test_insufficient_storage_preserves_installed_model_and_selection(self):
     self.download()
     self.manager.action('active', {'profile': 'small', 'model': 'gwm8223'})
@@ -286,13 +383,20 @@ class ModelManagerTest(unittest.TestCase):
     self.assertFalse(self.model_status()['installed'])
     self.assertTrue(self.wait_for_check()['installed'])
 
-  def test_offroad_authority_rechecked_after_validation(self):
+  def test_onroad_selection_preserves_current_runtime_until_next_start(self):
     self.download()
-    samples = iter([True, False])
-    self.manager.parked = lambda: next(samples)
+    current = resolve_runtime(False, root=self.root)
+    self.manager.parked = lambda: False
+    self.assertTrue(self.manager.snapshot()['capabilities']['select'])
+    self.manager.action('active', {'profile': 'small', 'model': 'gwm8223'})
+    self.assertEqual(preferences(self.root)['small'], 'gwm8223')
+    self.assertEqual(current.small_id, DEFAULT_SMALL)
+    self.assertEqual(resolve_runtime(False, root=self.root).small_id, 'gwm8223')
     with self.assertRaises(ModelError):
-      self.manager.action('active', {'profile': 'small', 'model': 'gwm8223'})
-    self.assertEqual(preferences(self.root)['small'], DEFAULT_SMALL)
+      self.manager.action('download', {'model': 'gwm8223'})
+    owner = SimpleNamespace(chooses_big=lambda: True, choose=lambda *args: self.fail('Live Jetlink selection changed'))
+    with patch.object(self.manager, 'jetlink_owner', return_value=owner), self.assertRaises(ModelError):
+      self.manager.action('active', {'profile': 'big', 'model': ''})
 
   def test_hardware_profiles_and_selected_delete(self):
     self.download()
@@ -811,8 +915,8 @@ class ModelManagerTest(unittest.TestCase):
       with patch('openpilot.starpilot.models.manager.verified_artifact', side_effect=AssertionError('unchanged local file rehashed')):
         observer.action('active', {'profile': 'big', 'model': 'cinquev3'})
       self.parked = False
-      with self.assertRaises(ModelError):
-        observer.action('active', {'profile': 'big', 'model': 'cinquev3'})
+      observer.action('active', {'profile': 'big', 'model': 'cinquev3'})
+      self.assertEqual(preferences(self.root)['big'], 'cinquev3')
       self.parked = True
       (self.root / 'cinquev3/cinquev3_driving_tinygrad.pkl').write_bytes(b'corrupt')
       with self.assertRaisesRegex(ModelError, 'verify'):
