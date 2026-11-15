@@ -257,6 +257,136 @@ def test_ioniq_5_n_profile_damping_unwind_and_controller_limits():
   assert policy.output_context(1.0, -0.1, 2.0, -2.2, 3.5) == pytest.approx(0.05)
 
 
+def test_ioniq_5_n_sharp_turn_unwind_releases_torque_while_preserving_highway():
+  from types import SimpleNamespace
+  from openpilot.cereal import log
+  from opendbc.car.vehicle_model import VehicleModel
+
+  cp = interfaces[CAR.HYUNDAI_IONIQ_5_N].get_non_essential_params(CAR.HYUNDAI_IONIQ_5_N)
+  vm = VehicleModel(cp)
+  params = log.VehicleParameters.new_message(angleOffsetDeg=0.0, roll=0.0)
+  controller = LatControlTorque(cp.as_reader(), interfaces[CAR.HYUNDAI_IONIQ_5_N](cp), 0.01, controller_mode=ControllerMode.STARPILOT)
+  policy = controller.starpilot_extension.policy
+
+  # 1. Sharp right-turn exit (~20 mph / 9.0 m/s, sa = -115 deg -> -85 deg):
+  # Feedforward holds cleanly at apex, then sheds into-turn hold during corner exit while P assists unwind and D does not oppose wheel return.
+  cs = SimpleNamespace(vEgo=9.0, steeringAngleDeg=-115.0, steeringRateDeg=0.0, steeringPressed=False)
+  for _ in range(30):
+    controller.update(True, cs, vm, params, False, 0.045, False, 0.2)
+
+  hold_out, _, hold_state = controller.update(True, cs, vm, params, False, 0.045, False, 0.2)
+  assert hold_out < -0.55
+
+  # Corner exit: desired curvature drops over 0.30s while wheel begins unwinding from -115 -> -85 deg
+  for step in range(30):
+    frac = (step + 1) / 30.0
+    curv = 0.045 - 0.033 * frac
+    angle = -115.0 + 30.0 * frac
+    cs = SimpleNamespace(vEgo=9.2, steeringAngleDeg=angle, steeringRateDeg=80.0, steeringPressed=False)
+    unwind_out, _, unwind_state = controller.update(True, cs, vm, params, False, curv, False, 0.2)
+
+  assert policy.sharp_turn_weight > 0.80
+  assert unwind_state.f < 0.45 * hold_state.f
+  assert unwind_state.p < -0.60
+  assert unwind_state.d < 0.05
+  assert unwind_out > -0.10
+
+  # 2. Highway straight & highway curve invariance (vEgo >= 16.5 m/s or |sa| <= 28 deg):
+  # Sharp-turn gate is identically zero and _k_d stays at exact baseline.
+  hw_controller = LatControlTorque(cp.as_reader(), interfaces[CAR.HYUNDAI_IONIQ_5_N](cp), 0.01, controller_mode=ControllerMode.STARPILOT)
+  hw_policy = hw_controller.starpilot_extension.policy
+  for speed, sa, curv in [(29.0, -10.5, 0.0019), (22.0, 14.0, -0.0032), (17.5, -17.5, 0.0038), (12.0, -18.0, 0.0080)]:
+    hw_cs = SimpleNamespace(vEgo=speed, steeringAngleDeg=sa, steeringRateDeg=8.0, steeringPressed=False)
+    hw_controller.update(True, hw_cs, vm, params, False, curv, False, 0.2)
+    assert hw_policy.sharp_turn_weight == 0.0
+    assert hw_controller.pid._k_d[1] == [0.12, 0.10, 0.07]
+
+
+def test_ioniq_5_n_flm_snapshot_and_native_refinement_compatibility():
+  from types import SimpleNamespace
+  from openpilot.cereal import log
+  from opendbc.car import structs
+  from opendbc.car.vehicle_model import VehicleModel
+  from openpilot.starpilot.flm.controller_replay import (
+    ControllerReplay,
+    ReplayFrame,
+    SelectedControllerFactory,
+    capture_snapshot,
+    final_command,
+    frame_input,
+    restore_snapshot,
+  )
+  from openpilot.starpilot.flm.native_baseline import checkpoint_native_valid, effective_native_valid
+  from openpilot.starpilot.flm.runtime_adapter_registry import baseline_revision, baseline_values, selected_descriptor, selected_identity
+  from openpilot.starpilot.flm.torque_adapter import Objective
+
+  cp = interfaces[CAR.HYUNDAI_IONIQ_5_N].get_non_essential_params(CAR.HYUNDAI_IONIQ_5_N)
+  factory = SelectedControllerFactory(cp.as_reader(), 'starpilot')
+  live, live_vm = factory.create()
+  probe, probe_vm = factory.create()
+
+  # 1. Native torqued refinements below 3.0 (e.g. 2.85, within 0.7 * 3.25 = 2.275) must not be clobbered by update()
+  live.update_torque_parameters(2.85, -0.04, 0.09)
+  assert effective_native_valid(live, cp)
+  before_tune = baseline_values(live)
+  cs = SimpleNamespace(
+    vEgo=9.5, aEgo=0.1, steeringAngleDeg=-110.0, steeringRateDeg=65.0, steeringTorque=-180.0,
+    steeringPressed=False, standstill=False, steerFaultTemporary=False, steerFaultPermanent=False,
+    leftBlinker=False, rightBlinker=False, gasPressed=False, brakePressed=False,
+    gearShifter=structs.CarState.GearShifter.drive,
+  )
+  vp = log.VehicleParameters.new_message(angleOffsetDeg=0.0, roll=0.01)
+  live.update(True, cs, live_vm, vp, False, 0.025, False, 0.2)
+  assert baseline_values(live) == before_tune
+
+  # 2. FLM ControllerReplay capture_snapshot + restore_snapshot + exact frame verification across sharp-turn unwind
+  ctrl, ctrl_vm = factory.create()
+  ci = interfaces[CAR.HYUNDAI_IONIQ_5_N](cp.as_reader())
+  desc = selected_descriptor(cp.as_reader(), ci, ctrl)
+  assert desc is not None
+  base_rev = baseline_revision(desc, baseline_values(ctrl))
+  ident = selected_identity(desc, '0' * 64, base_rev)
+  replay = ControllerReplay(
+    factory, Objective('feedforward', 'high', 'steady'),
+    identity=ident, baseline_revision=base_rev, model_revision='test',
+  )
+  snap0 = capture_snapshot(ctrl, ctrl_vm)
+  replay.checkpoint(100_000_000, snap0)
+  for idx in range(6):
+    t_ns = 100_000_000 + idx * 10_000_000
+    step_cs = structs.CarState.new_message(
+      vEgo=9.2, aEgo=0.0, steeringAngleDeg=-115.0 + idx * 8.0, steeringRateDeg=80.0, steeringTorque=-150.0,
+      steeringPressed=False, standstill=False, steerFaultTemporary=False, steerFaultPermanent=False,
+      leftBlinker=False, rightBlinker=False, gasPressed=False, brakePressed=False,
+      gearShifter=structs.CarState.GearShifter.drive,
+    )
+    inputs = frame_input(
+      step_cs, ctrl_vm, vp, active=True, safety_limited=False,
+      desired_curvature=0.040 - idx * 0.005, curvature_limited=False, lat_delay=0.2,
+    ) + (('control_frame', float(idx + 1)),)
+    out, _, _ = ctrl.update(True, step_cs, ctrl_vm, vp, False, 0.040 - idx * 0.005, False, 0.2)
+    assert checkpoint_native_valid(ctrl, cp, now_ns=t_ns)
+    t_vals = (
+      ('effective_factor', float(ctrl.torque_params.latAccelFactor)),
+      ('offset', float(ctrl.torque_params.latAccelOffset)),
+      ('friction', float(ctrl.torque_params.friction)),
+      ('pid_pos_limit', float(ctrl.pid.pos_limit)),
+      ('pid_neg_limit', float(ctrl.pid.neg_limit)),
+    )
+    replay.raw_mode = True
+    tf = ReplayFrame(
+      control_ns=t_ns, inputs=inputs, selected_command=final_command(out),
+      applied_coordinates=(), frame_sequence=idx + 1,
+      actual_lac_command=float(out), actual_stage_residual=(0.0, 0.0),
+      torque_values=t_vals, controller_domain='torque',
+      healthy=True, manual=False,
+    )
+    norm = replay.normalize(tf, _verify_only=True)
+    assert norm is not None and norm.verified
+  snap_after = capture_snapshot(ctrl, ctrl_vm)
+  restore_snapshot(probe, probe_vm, snap_after)
+
+
 @pytest.mark.parametrize('vehicle,profile,factor', CASES)
 @pytest.mark.parametrize('alpha_long', [False, True])
 def test_vehicle_tune_defaults_are_independent_of_longitudinal_choice(vehicle, profile, factor, alpha_long):

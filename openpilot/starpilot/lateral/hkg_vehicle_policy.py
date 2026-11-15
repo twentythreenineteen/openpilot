@@ -83,7 +83,9 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       self.base_kd_v = [0.12, 0.10, 0.07]
       self.prev_output = 0.0
       self.steering_angle_deg = 0.0
+      self.prev_steering_angle_deg = 0.0
       self.steering_rate_deg = 0.0
+      self.sharp_turn_weight = 0.0
       self.last_speed = 0.0
       self.last_setpoint = 0.0
       self.last_measurement = 0.0
@@ -104,29 +106,56 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       return float(np.clip(target / raw_sr, 0.80, 1.06))
     return 1.0
 
+  def _ioniq_5_n_sharp_turn_weight(self, speed, sa=None):
+    angle = abs(float(self.steering_angle_deg if sa is None else sa))
+    if angle <= 28.0 or speed >= 16.5:
+      return 0.0
+    angle_weight = float(np.interp(angle, [28.0, 50.0, 95.0], [0.0, 0.65, 1.0]))
+    low_spd_weight = float(np.interp(float(speed), [12.5, 16.5], [1.0, 0.0]))
+    return angle_weight * low_spd_weight
+
   def update(self, active, cs, vm, params, safety_limited, curvature, curvature_limited, delay):
     self.requested_curvature = curvature
     self.future_lateral_accel = curvature * cs.vEgo ** 2
     self.steering_pressed = bool(cs.steeringPressed)
     if self.profile == 'ioniq_5_n':
-      self.steering_angle_deg = float(getattr(cs, 'steeringAngleDeg', 0.0))
+      sa = float(getattr(cs, 'steeringAngleDeg', 0.0))
+      prev_sa = getattr(self, 'prev_steering_angle_deg', sa)
+      sa_delta = sa - prev_sa
+      self.prev_steering_angle_deg = sa
+      self.steering_angle_deg = sa
       self.steering_rate_deg = abs(float(getattr(cs, 'steeringRateDeg', 0.0)))
       self.last_speed = float(cs.vEgo)
       self.last_vm_sR = float(getattr(vm, 'sR', 13.0))
+      self.sharp_turn_weight = self._ioniq_5_n_sharp_turn_weight(self.last_speed, sa)
       raw_roll = float(getattr(params, 'roll', 0.0))
       self.last_roll = raw_roll
       if self.filtered_roll is None:
         self.filtered_roll = raw_roll
-      elif abs(float(cs.steeringAngleDeg)) < 18.0 and abs(self.future_lateral_accel) < 0.75:
+      elif abs(sa) < 18.0 and abs(self.future_lateral_accel) < 0.75:
         self.filtered_roll += 0.005 * (raw_roll - self.filtered_roll)
-      if self.parent.torque_params.latAccelFactor < 3.0:
-        self.parent.torque_params.latAccelFactor = 3.25
-        self.parent.update_limits()
       if not active:
         self.prev_output = 0.0
+        self.prev_steering_angle_deg = sa
+        self.sharp_turn_weight = 0.0
+        self.parent.pid._k_d = [self.base_kd_bp, list(self.base_kd_v)]
       else:
+        prev_sp = getattr(self, 'previous_setpoint', 0.0)
+        future_drop = max(abs(prev_sp) - abs(self.future_lateral_accel), 0.0) if prev_sp * self.future_lateral_accel >= 0.0 else abs(prev_sp)
+        sa_sign = 1.0 if sa >= 0.0 else -1.0
+        sa_unwind_speed = -sa_sign * (sa_delta / self.dt)
+        wheel_returning = float(np.interp(sa_unwind_speed, [12.0, 75.0], [0.0, 1.0]))
+        path_unwinding = float(np.interp(future_drop, [0.03, 0.25], [0.0, 1.0]))
+        kd_unwind = self.sharp_turn_weight * max(wheel_returning, path_unwinding)
+        if kd_unwind > 0.0:
+          kd_scale = 1.0 - 0.90 * kd_unwind
+          self.parent.pid._k_d = [self.base_kd_bp, [v * kd_scale for v in self.base_kd_v]]
+        else:
+          self.parent.pid._k_d = [self.base_kd_bp, list(self.base_kd_v)]
         if not cs.steeringPressed and abs(self.future_lateral_accel) > 0.65 and self.parent.pid.i * self.future_lateral_accel > 0.0:
           self.parent.pid.i *= 0.992
+        if self.sharp_turn_weight > 0.0 and future_drop > 0.03 and self.parent.pid.i * (-sa) > 0.0:
+          self.parent.pid.i *= 0.94
     return super().update(active, cs, vm, params, safety_limited, curvature, curvature_limited, delay)
 
   def feedforward_context(self, value, setpoint, jerk, measurement, speed):
@@ -157,6 +186,18 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
       mount_bias = 0.038 if safe_roll > 0.015 else 0.0
       safe_roll_comp = float(np.clip((safe_roll - mount_bias) * 9.81, -0.14, 0.14)) * fade
       value = value + raw_roll_comp - safe_roll_comp
+      sharp_w = self._ioniq_5_n_sharp_turn_weight(speed)
+      if sharp_w > 0.0:
+        future_lat = float(getattr(self, 'future_lateral_accel', setpoint))
+        jerk_unwind = float(np.interp(-setpoint * jerk / max(abs(setpoint), 0.5), [0.08, 0.45, 1.25], [0.0, 0.55, 1.0])) if setpoint * jerk < 0.0 else 0.0
+        lead_drop = max(abs(setpoint) - abs(future_lat), 0.0) if setpoint * future_lat >= 0.0 else abs(setpoint)
+        lead_unwind = float(np.interp(lead_drop, [0.06, 0.35, 0.80], [0.0, 0.45, 0.90])) if setpoint * jerk <= 0.05 else 0.0
+        overshoot = max(abs(measurement) - abs(setpoint), 0.0) if measurement * setpoint >= 0.0 else abs(measurement)
+        path_exiting = (setpoint * jerk < -0.06) or (lead_drop > 0.06)
+        overshoot_unwind = float(np.interp(overshoot, [0.15, 0.55, 1.15], [0.0, 0.45, 0.85])) if path_exiting else 0.0
+        unwind_drive = min(max(jerk_unwind, lead_unwind, overshoot_unwind) + 0.30 * min(max(jerk_unwind, lead_unwind), overshoot_unwind), 1.0)
+        if unwind_drive > 0.0:
+          return value * (1.0 - 0.85 * sharp_w * unwind_drive)
       if setpoint * jerk > 0.0 and abs(setpoint) < 1.4:
         turn_in_weight = min(abs(jerk) / 0.8, 1.0) * (1.0 - abs(setpoint) / 1.4)
         return value * (1.0 - 0.18 * turn_in_weight)
@@ -220,6 +261,14 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
         gap = max(abs(meas) - abs(sp), abs(sa) * 0.012)
         unwind_weight = min(gap / 0.75, 1.0)
         attenuated = (1.0 + 0.18 * lsf_ratio) / (1.0 + lsf_ratio)
+        sharp_w = self._ioniq_5_n_sharp_turn_weight(spd, sa)
+        if sharp_w > 0.0:
+          center_snap_guard = max(
+            float(np.interp(spd, [3.8, 5.2], [1.0, 0.0])),
+            float(np.interp(abs(sp), [0.30, 0.65], [1.0, 0.0])),
+          )
+          active_unwind_scale = min(1.0, 4.0 / max(kp + lsf, 4.0))
+          attenuated = max(attenuated, center_snap_guard * attenuated + (1.0 - center_snap_guard) * active_unwind_scale)
         scale *= 1.0 - unwind_weight * (1.0 - attenuated)
       elif spd < 4.5:
         # Prevent 394x low-speed KP+LSF saturation during crawl-speed (<10 mph) intersection turns
@@ -283,7 +332,11 @@ class HKGVehicleTorquePolicy(HKGShapedTorquePolicy):
         else:
           scaled = min(float(scaled), max_rev)
       elif not self.steering_pressed and not self.previous_pressed and abs(setpoint) >= 0.35 and setpoint * measurement > 0.0:
-        rc = 0.05 if setpoint * jerk < -0.35 else 0.11
+        sharp_w = self._ioniq_5_n_sharp_turn_weight(speed)
+        if sharp_w > 0.0 and (setpoint * jerk < -0.12 or abs(measurement) > abs(setpoint) + 0.15):
+          rc = 0.015
+        else:
+          rc = 0.05 if setpoint * jerk < -0.35 else 0.11
         alpha = self.dt / (rc + self.dt)
         scaled = self.prev_output + alpha * (scaled - self.prev_output)
       self.prev_output = float(scaled)
